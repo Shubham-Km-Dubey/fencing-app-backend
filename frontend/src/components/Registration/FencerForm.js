@@ -2,6 +2,14 @@ import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import '../../styles/FencerForm.css';
 
+// API configuration
+const API_BASE_URL = process.env.NODE_ENV === 'development' 
+  ? 'http://localhost:5000'
+  : 'https://fencing-app-backend.onrender.com';
+
+// Registration fee amount (in INR)
+const REGISTRATION_FEE = 500;
+
 const FencerForm = ({ user, registrationData, onCompleteRegistration }) => {
   const [currentStep, setCurrentStep] = useState(1);
   const [formData, setFormData] = useState({
@@ -60,6 +68,7 @@ const FencerForm = ({ user, registrationData, onCompleteRegistration }) => {
   const [message, setMessage] = useState('');
   const [uploadProgress, setUploadProgress] = useState({});
   const [isSameAddress, setIsSameAddress] = useState(false);
+  const [paymentProcessing, setPaymentProcessing] = useState(false);
 
   // Pre-fill email and district if available from registration
   useEffect(() => {
@@ -142,36 +151,52 @@ const FencerForm = ({ user, registrationData, onCompleteRegistration }) => {
   };
 
   const handleFileUpload = async (file, fieldName) => {
-    const formData = new FormData();
-    formData.append('document', file);
+    const uploadFormData = new FormData();
+    uploadFormData.append('file', file);
     
     try {
       setUploadProgress(prev => ({ ...prev, [fieldName]: 0 }));
       
-      const response = await axios.post('http://localhost:5000/api/upload', formData, {
-        headers: {
-          'Content-Type': 'multipart/form-data',
-        },
-        onUploadProgress: (progressEvent) => {
-          const percentCompleted = Math.round((progressEvent.loaded * 100) / progressEvent.total);
-          setUploadProgress(prev => ({ ...prev, [fieldName]: percentCompleted }));
+      const response = await axios.post(
+        `${API_BASE_URL}/api/upload/single`,
+        uploadFormData,
+        {
+          headers: {
+            'Content-Type': 'multipart/form-data',
+          },
+          onUploadProgress: (progressEvent) => {
+            const percentCompleted = Math.round((progressEvent.loaded * 100) / progressEvent.total);
+            setUploadProgress(prev => ({ ...prev, [fieldName]: percentCompleted }));
+          }
         }
-      });
+      );
 
-      setFormData(prev => ({
-        ...prev,
-        documents: {
-          ...prev.documents,
-          [fieldName]: response.data.fileUrl
-        }
-      }));
-      
-      setUploadProgress(prev => ({ ...prev, [fieldName]: null }));
-      return response.data.fileUrl;
+      // Check if upload was successful
+      if (response.data.success) {
+        setFormData(prev => ({
+          ...prev,
+          documents: {
+            ...prev.documents,
+            [fieldName]: response.data.data.downloadURL
+          }
+        }));
+        
+        // Debug log
+        console.log(`File ${fieldName} uploaded successfully:`, {
+          field: fieldName,
+          url: response.data.data.downloadURL,
+          documentState: formData.documents
+        });
+        
+        setUploadProgress(prev => ({ ...prev, [fieldName]: null }));
+        return response.data.data.downloadURL;
+      } else {
+        throw new Error(response.data.error || 'Upload failed');
+      }
     } catch (error) {
       console.error('Upload error:', error);
       setUploadProgress(prev => ({ ...prev, [fieldName]: null }));
-      setMessage('File upload failed. Please try again.');
+      setMessage(`File upload failed: ${error.message}`);
       return null;
     }
   };
@@ -226,6 +251,65 @@ const FencerForm = ({ user, registrationData, onCompleteRegistration }) => {
     }
   };
 
+  // Create payment session
+  const createPaymentSession = async (orderData) => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/payments/create-session`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(orderData),
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to create payment session');
+      }
+
+      const data = await response.json();
+      return data;
+    } catch (error) {
+      console.error('Payment session error:', error);
+      throw error;
+    }
+  };
+
+  // Initiate payment process
+  const initiatePayment = async (fencerData) => {
+    try {
+      setPaymentProcessing(true);
+      setMessage('Redirecting to payment gateway...');
+
+      const orderData = {
+        orderAmount: REGISTRATION_FEE,
+        customerName: `${formData.firstName} ${formData.lastName}`.trim(),
+        customerEmail: formData.email,
+        customerPhone: formData.mobileNumber || '9999999999',
+        fencerData: fencerData
+      };
+
+      // Create payment session
+      const paymentSession = await createPaymentSession(orderData);
+
+      if (paymentSession.success) {
+        // Redirect to Cashfree payment page
+        if (paymentSession.data.payment_url) {
+          window.location.href = paymentSession.data.payment_url;
+        } else {
+          throw new Error('Payment URL not received');
+        }
+      } else {
+        throw new Error(paymentSession.error || 'Payment initiation failed');
+      }
+
+    } catch (error) {
+      console.error('Payment initiation error:', error);
+      setMessage(`Payment failed: ${error.message}`);
+      setPaymentProcessing(false);
+      setLoading(false);
+    }
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     setLoading(true);
@@ -247,14 +331,21 @@ const FencerForm = ({ user, registrationData, onCompleteRegistration }) => {
         userId: user?._id
       };
 
-      const response = await axios.post('http://localhost:5000/api/fencer/register', submissionData);
+      // Debug: Check document URLs before submission
+      console.log('Submitting with documents:', formData.documents);
+
+      // First save fencer registration
+      const response = await axios.post(`${API_BASE_URL}/api/fencer/register`, submissionData);
       
-      setMessage('Registration submitted successfully! Proceeding to payment...');
-      setTimeout(() => {
-        // For now, skip payment and complete registration
-        // In future, integrate payment gateway here
-        onCompleteRegistration();
-      }, 2000);
+      if (response.data.success) {
+        setMessage('Registration submitted successfully! Redirecting to payment...');
+        
+        // Initiate payment process
+        await initiatePayment(response.data.data);
+      } else {
+        throw new Error(response.data.error || 'Registration failed');
+      }
+
     } catch (error) {
       setMessage(error.response?.data?.message || 'Registration failed. Please try again.');
       console.error('Registration error:', error);
@@ -301,82 +392,82 @@ const FencerForm = ({ user, registrationData, onCompleteRegistration }) => {
       <form onSubmit={handleSubmit} className="fencer-form">
         
         {/* Step 1: Login Credentials */}
-{currentStep === 1 && (
-  <section className="form-section login-credentials-section">
-    <h2 className="section-title">
-      <i className="fas fa-lock"></i>
-      Login Credentials
-    </h2>
-    <p className="section-subtitle">Create your login credentials for future access</p>
-    
-    <div className="form-row">
-      <div className="form-group full-width">
-        <label htmlFor="email">Email Address *</label>
-        <input
-          type="email"
-          id="email"
-          name="email"
-          value={formData.email}
-          onChange={handleInputChange}
-          required
-          placeholder="Enter your email address"
-        />
-      </div>
-    </div>
+        {currentStep === 1 && (
+          <section className="form-section login-credentials-section">
+            <h2 className="section-title">
+              <i className="fas fa-lock"></i>
+              Login Credentials
+            </h2>
+            <p className="section-subtitle">Create your login credentials for future access</p>
+            
+            <div className="form-row">
+              <div className="form-group full-width">
+                <label htmlFor="email">Email Address *</label>
+                <input
+                  type="email"
+                  id="email"
+                  name="email"
+                  value={formData.email}
+                  onChange={handleInputChange}
+                  required
+                  placeholder="Enter your email address"
+                />
+              </div>
+            </div>
 
-    <div className="form-row">
-      <div className="form-group">
-        <label htmlFor="password">Password *</label>
-        <input
-          type="password"
-          id="password"
-          name="password"
-          value={formData.password}
-          onChange={handleInputChange}
-          required
-          placeholder="Create a password"
-          minLength="6"
-        />
-        {formData.password && (
-          <div className={`password-strength ${
-            formData.password.length < 6 ? 'weak' : 
-            formData.password.length < 8 ? 'medium' : 'strong'
-          }`}>
-            {formData.password.length < 6 ? 'Weak password' : 
-             formData.password.length < 8 ? 'Medium strength' : 'Strong password'}
-          </div>
+            <div className="form-row">
+              <div className="form-group">
+                <label htmlFor="password">Password *</label>
+                <input
+                  type="password"
+                  id="password"
+                  name="password"
+                  value={formData.password}
+                  onChange={handleInputChange}
+                  required
+                  placeholder="Create a password"
+                  minLength="6"
+                />
+                {formData.password && (
+                  <div className={`password-strength ${
+                    formData.password.length < 6 ? 'weak' : 
+                    formData.password.length < 8 ? 'medium' : 'strong'
+                  }`}>
+                    {formData.password.length < 6 ? 'Weak password' : 
+                     formData.password.length < 8 ? 'Medium strength' : 'Strong password'}
+                  </div>
+                )}
+              </div>
+
+              <div className="form-group">
+                <label htmlFor="confirmPassword">Confirm Password *</label>
+                <input
+                  type="password"
+                  id="confirmPassword"
+                  name="confirmPassword"
+                  value={formData.confirmPassword}
+                  onChange={handleInputChange}
+                  required
+                  placeholder="Confirm your password"
+                  minLength="6"
+                />
+                {formData.confirmPassword && formData.password !== formData.confirmPassword && (
+                  <div className="password-strength weak">
+                    Passwords do not match
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="form-actions step-actions">
+              <div></div> {/* Empty div for spacing */}
+              <button type="button" className="next-btn" onClick={nextStep}>
+                Next: Personal Information
+                <i className="fas fa-arrow-right"></i>
+              </button>
+            </div>
+          </section>
         )}
-      </div>
-
-      <div className="form-group">
-        <label htmlFor="confirmPassword">Confirm Password *</label>
-        <input
-          type="password"
-          id="confirmPassword"
-          name="confirmPassword"
-          value={formData.confirmPassword}
-          onChange={handleInputChange}
-          required
-          placeholder="Confirm your password"
-          minLength="6"
-        />
-        {formData.confirmPassword && formData.password !== formData.confirmPassword && (
-          <div className="password-strength weak">
-            Passwords do not match
-          </div>
-        )}
-      </div>
-    </div>
-
-    <div className="form-actions step-actions">
-      <div></div> {/* Empty div for spacing */}
-      <button type="button" className="next-btn" onClick={nextStep}>
-        Next: Personal Information
-        <i className="fas fa-arrow-right"></i>
-      </button>
-    </div>
-  </section>
-)}
 
         {/* Step 2: Personal & Fencing Information */}
         {currentStep === 2 && (
@@ -1056,20 +1147,29 @@ const FencerForm = ({ user, registrationData, onCompleteRegistration }) => {
                 Payment Information
               </h2>
               <div className="payment-notice">
-                <h3>Registration Fee: ₹500</h3>
-                <p>Complete your registration by making the payment. Your registration will be processed after successful payment.</p>
+                <h3>Registration Fee: ₹{REGISTRATION_FEE}</h3>
+                <p>Complete your registration by making the payment. You will be redirected to secure payment gateway.</p>
+                
+                {/* Test mode indicator */}
+                {process.env.NODE_ENV !== 'production' && (
+                  <div className="test-mode-banner">
+                    <i className="fas fa-vial"></i>
+                    Test Mode - Using Sandbox Environment
+                  </div>
+                )}
+
                 <div className="payment-features">
                   <div className="feature">
                     <i className="fas fa-shield-alt"></i>
                     <span>Secure Payment</span>
                   </div>
                   <div className="feature">
-                    <i className="fas fa-clock"></i>
-                    <span>Instant Confirmation</span>
+                    <i className="fas fa-credit-card"></i>
+                    <span>Multiple Payment Options</span>
                   </div>
                   <div className="feature">
                     <i className="fas fa-file-invoice"></i>
-                    <span>Payment Receipt</span>
+                    <span>Instant Receipt</span>
                   </div>
                 </div>
               </div>
@@ -1080,11 +1180,15 @@ const FencerForm = ({ user, registrationData, onCompleteRegistration }) => {
                 <i className="fas fa-arrow-left"></i>
                 Previous
               </button>
-              <button type="submit" className="submit-btn payment-btn" disabled={loading}>
-                {loading ? (
+              <button 
+                type="submit" 
+                className="submit-btn payment-btn" 
+                disabled={loading || paymentProcessing}
+              >
+                {(loading || paymentProcessing) ? (
                   <>
                     <div className="spinner"></div>
-                    Processing...
+                    {paymentProcessing ? 'Redirecting to Payment...' : 'Processing...'}
                   </>
                 ) : (
                   <>
