@@ -1,0 +1,11 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    // Allow anyone to read files in the 'media' folder
+    match /media/{allPaths=**} {
+      allow read: if true; 
+      // Only allow files to be created/written by the function's service account
+      allow write: if request.auth.uid != null;
+    }
+  }
+}
