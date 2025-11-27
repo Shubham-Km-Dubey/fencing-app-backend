@@ -13,6 +13,7 @@ app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 // In backend/server.js, add this with your other route imports:
 app.use('/api/fencer', require('./routes/fencerRoutes'));
 app.use('/api/payments', require('./routes/paymentRoutes'));
+app.use('/api/users', require('./routes/userManagementRoutes'));
 
 // MongoDB Connection
 const MONGODB_URI = 'mongodb+srv://Shubham:%23-Xc4RVVM7VUk8Q@cluster0.vtjyioo.mongodb.net/fencing_association?retryWrites=true&w=majority';
