@@ -145,6 +145,10 @@ const initializeDefaultAdmins = async () => {
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/users', require('./routes/users'));
 app.use('/api/admin', require('./routes/admin'));
+// Import routes
+app.use('/api/upload', require('./routes/uploadRoutes'));
+app.use('/api/register', require('./routes/registrationRoutes')); // Add this line
+// Add your other routes here...
 
 // Temporarily comment out superadmin route until file is created
 // app.use('/api/superadmin', require('./routes/superadmin'));
