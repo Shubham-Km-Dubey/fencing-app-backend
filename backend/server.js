@@ -14,6 +14,7 @@ app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 app.use('/api/fencer', require('./routes/fencerRoutes'));
 app.use('/api/payments', require('./routes/paymentRoutes'));
 app.use('/api/users', require('./routes/userManagementRoutes'));
+app.use('/api/districts', require('./routes/districts'));
 
 // MongoDB Connection
 const MONGODB_URI = 'mongodb+srv://Shubham:%23-Xc4RVVM7VUk8Q@cluster0.vtjyioo.mongodb.net/fencing_association?retryWrites=true&w=majority';

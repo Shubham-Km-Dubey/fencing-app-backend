@@ -56,7 +56,7 @@ router.get('/districts', auth, async (req, res) => {
     }
 });
 
-// Create new district
+// Create new district + district admin with shortcode
 router.post('/districts', auth, async (req, res) => {
     try {
         const user = await User.findById(req.user.id);
@@ -72,7 +72,7 @@ router.post('/districts', auth, async (req, res) => {
             $or: [{ name }, { code }] 
         });
         if (existingDistrict) {
-            return res.status(400).json({ message: 'District already exists' });
+            return res.status(400).json({ message: 'District with this name or code already exists' });
         }
 
         // Check if admin email already exists
@@ -81,23 +81,29 @@ router.post('/districts', auth, async (req, res) => {
             return res.status(400).json({ message: 'Admin email already registered' });
         }
 
-        // Create district admin user
+        // Generate random password
         const adminPassword = generateRandomPassword();
+
+        // Create district admin user with shortcode
         const districtAdmin = new User({
             email: adminEmail,
             password: adminPassword,
             role: 'district_admin',
             district: name,
+            districtShortcode: code.toUpperCase(),   // Saves NWD, SED, CD, etc.
             name: adminName,
+            phone: contactNumber || '',
             isApproved: true,
-            districtApproved: true
+            districtApproved: true,
+            centralApproved: true,
+            profileCompleted: true
         });
         await districtAdmin.save();
 
-        // Create district
+        // Create district document
         const district = new District({
             name,
-            code,
+            code: code.toUpperCase(),
             adminEmail,
             adminName,
             contactNumber,
@@ -107,14 +113,17 @@ router.post('/districts', auth, async (req, res) => {
         await district.save();
 
         res.json({
+            message: 'District and admin created successfully',
             district,
             adminCredentials: {
                 email: adminEmail,
-                password: adminPassword
+                password: adminPassword,
+                shortcode: code.toUpperCase()
             }
         });
     } catch (error) {
-        res.status(400).json({ message: error.message });
+        console.error('Create district error:', error);
+        res.status(500).json({ message: 'Server error', error: error.message });
     }
 });
 
@@ -193,7 +202,6 @@ router.post('/approve/:userId', auth, async (req, res) => {
             return res.status(400).json({ message: 'User not approved by district' });
         }
 
-        // Generate DAF ID
         const dafId = generateDAFId(userToApprove.role);
 
         userToApprove.centralApproved = true;
@@ -240,7 +248,7 @@ router.post('/reject/:userId', auth, async (req, res) => {
 
 // Helper functions
 const generateRandomPassword = () => {
-    return Math.random().toString(36).slice(-8);
+    return Math.random().toString(36).slice(-8) + 'A1!';
 };
 
 const generateDAFId = (type) => {

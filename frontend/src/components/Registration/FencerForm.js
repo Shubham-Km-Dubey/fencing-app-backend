@@ -1,15 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import '../../styles/FencerForm.css';
-
 // API configuration
-const API_BASE_URL = process.env.NODE_ENV === 'development' 
+const API_BASE_URL = process.env.NODE_ENV === 'development'
   ? 'http://localhost:5000'
   : 'https://fencing-app-backend.onrender.com';
-
 // Registration fee amount (in INR)
 const REGISTRATION_FEE = 500;
-
 const FencerForm = ({ user, registrationData, onCompleteRegistration }) => {
   const [currentStep, setCurrentStep] = useState(1);
   const [formData, setFormData] = useState({
@@ -17,7 +14,7 @@ const FencerForm = ({ user, registrationData, onCompleteRegistration }) => {
     email: '',
     password: '',
     confirmPassword: '',
-    
+   
     // Personal Information
     firstName: '',
     middleName: '',
@@ -27,7 +24,7 @@ const FencerForm = ({ user, registrationData, onCompleteRegistration }) => {
     mothersName: '',
     mobileNumber: '',
     dateOfBirth: '',
-    
+   
     // Address Information
     permanentAddress: {
       addressLine1: '',
@@ -43,15 +40,15 @@ const FencerForm = ({ user, registrationData, onCompleteRegistration }) => {
       district: '',
       pinCode: ''
     },
-    
+   
     // Fencing Information
     highestAchievement: '',
     coachName: '',
     trainingCenter: '',
-    
+   
     // District Information
     selectedDistrict: '',
-    
+   
     // Document URLs (will be set after upload)
     documents: {
       passportPhoto: '',
@@ -63,13 +60,11 @@ const FencerForm = ({ user, registrationData, onCompleteRegistration }) => {
       doc3: ''
     }
   });
-
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
   const [uploadProgress, setUploadProgress] = useState({});
   const [isSameAddress, setIsSameAddress] = useState(false);
   const [paymentProcessing, setPaymentProcessing] = useState(false);
-
   // Pre-fill email and district if available from registration
   useEffect(() => {
     if (registrationData) {
@@ -80,10 +75,9 @@ const FencerForm = ({ user, registrationData, onCompleteRegistration }) => {
       }));
     }
   }, [registrationData, user]);
-
   const handleInputChange = (e) => {
     const { name, value } = e.target;
-    
+   
     if (name.includes('.')) {
       const [parent, child] = name.split('.');
       setFormData(prev => ({
@@ -100,7 +94,6 @@ const FencerForm = ({ user, registrationData, onCompleteRegistration }) => {
       }));
     }
   };
-
   const handleAddressCopy = () => {
     if (isSameAddress) {
       setFormData(prev => ({
@@ -120,11 +113,9 @@ const FencerForm = ({ user, registrationData, onCompleteRegistration }) => {
       }));
     }
   };
-
   useEffect(() => {
     handleAddressCopy();
   }, [isSameAddress]);
-
   const nextStep = () => {
     if (currentStep === 1) {
       // Validate email and password
@@ -144,19 +135,17 @@ const FencerForm = ({ user, registrationData, onCompleteRegistration }) => {
     setCurrentStep(prev => prev + 1);
     setMessage('');
   };
-
   const prevStep = () => {
     setCurrentStep(prev => prev - 1);
     setMessage('');
   };
-
   const handleFileUpload = async (file, fieldName) => {
     const uploadFormData = new FormData();
     uploadFormData.append('file', file);
-    
+   
     try {
       setUploadProgress(prev => ({ ...prev, [fieldName]: 0 }));
-      
+     
       const response = await axios.post(
         `${API_BASE_URL}/api/upload/single`,
         uploadFormData,
@@ -170,7 +159,6 @@ const FencerForm = ({ user, registrationData, onCompleteRegistration }) => {
           }
         }
       );
-
       // Check if upload was successful
       if (response.data.success) {
         setFormData(prev => ({
@@ -180,14 +168,14 @@ const FencerForm = ({ user, registrationData, onCompleteRegistration }) => {
             [fieldName]: response.data.data.downloadURL
           }
         }));
-        
+       
         // Debug log
         console.log(`File ${fieldName} uploaded successfully:`, {
           field: fieldName,
           url: response.data.data.downloadURL,
           documentState: formData.documents
         });
-        
+       
         setUploadProgress(prev => ({ ...prev, [fieldName]: null }));
         return response.data.data.downloadURL;
       } else {
@@ -200,7 +188,6 @@ const FencerForm = ({ user, registrationData, onCompleteRegistration }) => {
       return null;
     }
   };
-
   const handleFileChange = (e, fieldName) => {
     const file = e.target.files[0];
     if (file) {
@@ -208,7 +195,6 @@ const FencerForm = ({ user, registrationData, onCompleteRegistration }) => {
       const validImageTypes = ['image/jpeg', 'image/jpg', 'image/png'];
       const validPdfTypes = ['application/pdf'];
       const maxSize = 5 * 1024 * 1024; // 5MB
-
       if (fieldName.includes('Photo') || fieldName.includes('aadhar')) {
         if (!validImageTypes.includes(file.type)) {
           setMessage('Please upload JPEG, JPG or PNG images only.');
@@ -220,37 +206,31 @@ const FencerForm = ({ user, registrationData, onCompleteRegistration }) => {
           return;
         }
       }
-
       if (file.size > maxSize) {
         setMessage('File size should be less than 5MB.');
         return;
       }
-
       handleFileUpload(file, fieldName);
     }
   };
-
   // Drag and Drop Functions
   const handleDragOver = (e) => {
     e.preventDefault();
     e.currentTarget.classList.add('drag-over');
   };
-
   const handleDragLeave = (e) => {
     e.preventDefault();
     e.currentTarget.classList.remove('drag-over');
   };
-
   const handleDrop = (e, fieldName) => {
     e.preventDefault();
     e.currentTarget.classList.remove('drag-over');
-    
+   
     const files = e.dataTransfer.files;
     if (files.length > 0) {
       handleFileChange({ target: { files } }, fieldName);
     }
   };
-
   // Create payment session
   const createPaymentSession = async (orderData) => {
     try {
@@ -261,11 +241,9 @@ const FencerForm = ({ user, registrationData, onCompleteRegistration }) => {
         },
         body: JSON.stringify(orderData),
       });
-
       if (!response.ok) {
         throw new Error('Failed to create payment session');
       }
-
       const data = await response.json();
       return data;
     } catch (error) {
@@ -273,13 +251,11 @@ const FencerForm = ({ user, registrationData, onCompleteRegistration }) => {
       throw error;
     }
   };
-
   // Initiate payment process
   const initiatePayment = async (fencerData) => {
     try {
       setPaymentProcessing(true);
       setMessage('Redirecting to payment gateway...');
-
       const orderData = {
         orderAmount: REGISTRATION_FEE,
         customerName: `${formData.firstName} ${formData.lastName}`.trim(),
@@ -287,10 +263,8 @@ const FencerForm = ({ user, registrationData, onCompleteRegistration }) => {
         customerPhone: formData.mobileNumber || '9999999999',
         fencerData: fencerData
       };
-
       // Create payment session
       const paymentSession = await createPaymentSession(orderData);
-
       if (paymentSession.success) {
         // Redirect to Cashfree payment page
         if (paymentSession.data.payment_url) {
@@ -301,7 +275,6 @@ const FencerForm = ({ user, registrationData, onCompleteRegistration }) => {
       } else {
         throw new Error(paymentSession.error || 'Payment initiation failed');
       }
-
     } catch (error) {
       console.error('Payment initiation error:', error);
       setMessage(`Payment failed: ${error.message}`);
@@ -309,43 +282,36 @@ const FencerForm = ({ user, registrationData, onCompleteRegistration }) => {
       setLoading(false);
     }
   };
-
   const handleSubmit = async (e) => {
     e.preventDefault();
     setLoading(true);
     setMessage('');
-
     try {
       // Validate required documents
       const requiredDocs = ['passportPhoto', 'aadharFront', 'aadharBack', 'birthCertificate'];
       const missingDocs = requiredDocs.filter(doc => !formData.documents[doc]);
-
       if (missingDocs.length > 0) {
         setMessage(`Please upload all required documents: ${missingDocs.join(', ')}`);
         setLoading(false);
         return;
       }
-
       const submissionData = {
         ...formData,
         userId: user?._id
       };
-
       // Debug: Check document URLs before submission
       console.log('Submitting with documents:', formData.documents);
-
       // First save fencer registration
       const response = await axios.post(`${API_BASE_URL}/api/fencer/register`, submissionData);
-      
+     
       if (response.data.success) {
         setMessage('Registration submitted successfully! Redirecting to payment...');
-        
+       
         // Initiate payment process
         await initiatePayment(response.data.data);
       } else {
         throw new Error(response.data.error || 'Registration failed');
       }
-
     } catch (error) {
       setMessage(error.response?.data?.message || 'Registration failed. Please try again.');
       console.error('Registration error:', error);
@@ -353,9 +319,7 @@ const FencerForm = ({ user, registrationData, onCompleteRegistration }) => {
       setLoading(false);
     }
   };
-
   const districts = ['North East', 'North West', 'South East', 'South West', 'Central'];
-
   // Step indicator component
   const StepIndicator = () => (
     <div className="step-indicator">
@@ -373,24 +337,20 @@ const FencerForm = ({ user, registrationData, onCompleteRegistration }) => {
       </div>
     </div>
   );
-
   return (
     <div className="fencer-form-container">
       <div className="form-header">
         <h1>Fencer Registration</h1>
         <p>Complete your profile to join Delhi Fencing Association</p>
       </div>
-
       <StepIndicator />
-
       {message && (
         <div className={`message ${message.includes('successful') ? 'success' : 'error'}`}>
           {message}
         </div>
       )}
-
       <form onSubmit={handleSubmit} className="fencer-form">
-        
+       
         {/* Step 1: Login Credentials */}
         {currentStep === 1 && (
           <section className="form-section login-credentials-section">
@@ -399,7 +359,7 @@ const FencerForm = ({ user, registrationData, onCompleteRegistration }) => {
               Login Credentials
             </h2>
             <p className="section-subtitle">Create your login credentials for future access</p>
-            
+           
             <div className="form-row">
               <div className="form-group full-width">
                 <label htmlFor="email">Email Address *</label>
@@ -414,7 +374,6 @@ const FencerForm = ({ user, registrationData, onCompleteRegistration }) => {
                 />
               </div>
             </div>
-
             <div className="form-row">
               <div className="form-group">
                 <label htmlFor="password">Password *</label>
@@ -430,15 +389,14 @@ const FencerForm = ({ user, registrationData, onCompleteRegistration }) => {
                 />
                 {formData.password && (
                   <div className={`password-strength ${
-                    formData.password.length < 6 ? 'weak' : 
+                    formData.password.length < 6 ? 'weak' :
                     formData.password.length < 8 ? 'medium' : 'strong'
                   }`}>
-                    {formData.password.length < 6 ? 'Weak password' : 
+                    {formData.password.length < 6 ? 'Weak password' :
                      formData.password.length < 8 ? 'Medium strength' : 'Strong password'}
                   </div>
                 )}
               </div>
-
               <div className="form-group">
                 <label htmlFor="confirmPassword">Confirm Password *</label>
                 <input
@@ -458,7 +416,6 @@ const FencerForm = ({ user, registrationData, onCompleteRegistration }) => {
                 )}
               </div>
             </div>
-
             <div className="form-actions step-actions">
               <div></div> {/* Empty div for spacing */}
               <button type="button" className="next-btn" onClick={nextStep}>
@@ -468,7 +425,6 @@ const FencerForm = ({ user, registrationData, onCompleteRegistration }) => {
             </div>
           </section>
         )}
-
         {/* Step 2: Personal & Fencing Information */}
         {currentStep === 2 && (
           <>
@@ -478,7 +434,7 @@ const FencerForm = ({ user, registrationData, onCompleteRegistration }) => {
                 <i className="fas fa-user"></i>
                 Personal Information
               </h2>
-              
+             
               <div className="form-row">
                 <div className="form-group">
                   <label htmlFor="firstName">First Name *</label>
@@ -492,7 +448,6 @@ const FencerForm = ({ user, registrationData, onCompleteRegistration }) => {
                     placeholder="Enter your first name"
                   />
                 </div>
-
                 <div className="form-group">
                   <label htmlFor="middleName">Middle Name</label>
                   <input
@@ -504,7 +459,6 @@ const FencerForm = ({ user, registrationData, onCompleteRegistration }) => {
                     placeholder="Enter your middle name"
                   />
                 </div>
-
                 <div className="form-group">
                   <label htmlFor="lastName">Last Name *</label>
                   <input
@@ -518,7 +472,6 @@ const FencerForm = ({ user, registrationData, onCompleteRegistration }) => {
                   />
                 </div>
               </div>
-
               <div className="form-row">
                 <div className="form-group">
                   <label htmlFor="aadharNumber">Aadhar Number *</label>
@@ -534,7 +487,6 @@ const FencerForm = ({ user, registrationData, onCompleteRegistration }) => {
                     maxLength="12"
                   />
                 </div>
-
                 <div className="form-group">
                   <label htmlFor="fathersName">Father's Name *</label>
                   <input
@@ -547,7 +499,6 @@ const FencerForm = ({ user, registrationData, onCompleteRegistration }) => {
                     placeholder="Enter father's full name"
                   />
                 </div>
-
                 <div className="form-group">
                   <label htmlFor="mothersName">Mother's Name *</label>
                   <input
@@ -561,7 +512,6 @@ const FencerForm = ({ user, registrationData, onCompleteRegistration }) => {
                   />
                 </div>
               </div>
-
               <div className="form-row">
                 <div className="form-group">
                   <label htmlFor="mobileNumber">Mobile Number *</label>
@@ -577,7 +527,6 @@ const FencerForm = ({ user, registrationData, onCompleteRegistration }) => {
                     maxLength="10"
                   />
                 </div>
-
                 <div className="form-group">
                   <label htmlFor="dateOfBirth">Date of Birth *</label>
                   <input
@@ -592,14 +541,12 @@ const FencerForm = ({ user, registrationData, onCompleteRegistration }) => {
                 </div>
               </div>
             </section>
-
             {/* Address Information Section */}
             <section className="form-section">
               <h2 className="section-title">
                 <i className="fas fa-home"></i>
                 Address Information
               </h2>
-
               {/* Permanent Address */}
               <div className="address-section">
                 <h3>Permanent Address *</h3>
@@ -617,7 +564,6 @@ const FencerForm = ({ user, registrationData, onCompleteRegistration }) => {
                     />
                   </div>
                 </div>
-
                 <div className="form-row">
                   <div className="form-group full-width">
                     <label htmlFor="permanentAddress.addressLine2">Address Line 2</label>
@@ -631,7 +577,6 @@ const FencerForm = ({ user, registrationData, onCompleteRegistration }) => {
                     />
                   </div>
                 </div>
-
                 <div className="form-row">
                   <div className="form-group">
                     <label htmlFor="permanentAddress.state">State *</label>
@@ -645,7 +590,6 @@ const FencerForm = ({ user, registrationData, onCompleteRegistration }) => {
                       placeholder="Enter state"
                     />
                   </div>
-
                   <div className="form-group">
                     <label htmlFor="permanentAddress.district">District *</label>
                     <input
@@ -658,7 +602,6 @@ const FencerForm = ({ user, registrationData, onCompleteRegistration }) => {
                       placeholder="Enter district"
                     />
                   </div>
-
                   <div className="form-group">
                     <label htmlFor="permanentAddress.pinCode">PIN Code *</label>
                     <input
@@ -675,7 +618,6 @@ const FencerForm = ({ user, registrationData, onCompleteRegistration }) => {
                   </div>
                 </div>
               </div>
-
               {/* Present Address */}
               <div className="address-section">
                 <div className="address-copy-toggle">
@@ -688,7 +630,6 @@ const FencerForm = ({ user, registrationData, onCompleteRegistration }) => {
                     Same as Permanent Address
                   </label>
                 </div>
-
                 {!isSameAddress && (
                   <>
                     <h3>Present Address *</h3>
@@ -706,7 +647,6 @@ const FencerForm = ({ user, registrationData, onCompleteRegistration }) => {
                         />
                       </div>
                     </div>
-
                     <div className="form-row">
                       <div className="form-group full-width">
                         <label htmlFor="presentAddress.addressLine2">Address Line 2</label>
@@ -720,7 +660,6 @@ const FencerForm = ({ user, registrationData, onCompleteRegistration }) => {
                         />
                       </div>
                     </div>
-
                     <div className="form-row">
                       <div className="form-group">
                         <label htmlFor="presentAddress.state">State *</label>
@@ -734,7 +673,6 @@ const FencerForm = ({ user, registrationData, onCompleteRegistration }) => {
                           placeholder="Enter state"
                         />
                       </div>
-
                       <div className="form-group">
                         <label htmlFor="presentAddress.district">District *</label>
                         <input
@@ -747,7 +685,6 @@ const FencerForm = ({ user, registrationData, onCompleteRegistration }) => {
                           placeholder="Enter district"
                         />
                       </div>
-
                       <div className="form-group">
                         <label htmlFor="presentAddress.pinCode">PIN Code *</label>
                         <input
@@ -767,14 +704,12 @@ const FencerForm = ({ user, registrationData, onCompleteRegistration }) => {
                 )}
               </div>
             </section>
-
             {/* Fencing Information Section */}
             <section className="form-section">
               <h2 className="section-title">
                 <i className="fas fa-trophy"></i>
                 Fencing Information
               </h2>
-
               <div className="form-row">
                 <div className="form-group">
                   <label htmlFor="selectedDistrict">Select District *</label>
@@ -791,7 +726,6 @@ const FencerForm = ({ user, registrationData, onCompleteRegistration }) => {
                     ))}
                   </select>
                 </div>
-
                 <div className="form-group">
                   <label htmlFor="coachName">Coach Name</label>
                   <input
@@ -803,7 +737,6 @@ const FencerForm = ({ user, registrationData, onCompleteRegistration }) => {
                     placeholder="Enter coach's name"
                   />
                 </div>
-
                 <div className="form-group">
                   <label htmlFor="trainingCenter">Training Center</label>
                   <input
@@ -816,7 +749,6 @@ const FencerForm = ({ user, registrationData, onCompleteRegistration }) => {
                   />
                 </div>
               </div>
-
               <div className="form-row">
                 <div className="form-group full-width">
                   <label htmlFor="highestAchievement">Highest Achievement</label>
@@ -831,7 +763,6 @@ const FencerForm = ({ user, registrationData, onCompleteRegistration }) => {
                 </div>
               </div>
             </section>
-
             <div className="form-actions step-actions">
               <button type="button" className="prev-btn" onClick={prevStep}>
                 <i className="fas fa-arrow-left"></i>
@@ -844,7 +775,6 @@ const FencerForm = ({ user, registrationData, onCompleteRegistration }) => {
             </div>
           </>
         )}
-
         {/* Step 3: Documents & Payment */}
         {currentStep === 3 && (
           <>
@@ -855,20 +785,19 @@ const FencerForm = ({ user, registrationData, onCompleteRegistration }) => {
                 Documents Upload
               </h2>
               <p className="section-subtitle">Upload all required documents. Maximum file size: 5MB per file</p>
-
               <div className="documents-grid">
                 {/* Required Documents */}
                 <div className="document-group required">
                   <h3>Required Documents</h3>
                   <p className="document-subtitle">These documents are mandatory for registration</p>
-                  
+                 
                   <div className="document-item">
                     <label className="document-label">
                       Passport Size Photo *
                       <span className="document-requirement">(JPEG, JPG, PNG - Max 5MB)</span>
                     </label>
                     <div className="file-upload-container">
-                      <div 
+                      <div
                         className="file-upload-area"
                         onDragOver={handleDragOver}
                         onDragLeave={handleDragLeave}
@@ -903,8 +832,8 @@ const FencerForm = ({ user, registrationData, onCompleteRegistration }) => {
                             <span>Uploading: {uploadProgress.passportPhoto}%</span>
                           </div>
                           <div className="progress-bar-container">
-                            <div 
-                              className="progress-bar" 
+                            <div
+                              className="progress-bar"
                               style={{ width: `${uploadProgress.passportPhoto}%` }}
                             ></div>
                           </div>
@@ -912,14 +841,13 @@ const FencerForm = ({ user, registrationData, onCompleteRegistration }) => {
                       )}
                     </div>
                   </div>
-
                   <div className="document-item">
                     <label className="document-label">
                       Aadhar Card Front *
                       <span className="document-requirement">(JPEG, JPG, PNG - Max 5MB)</span>
                     </label>
                     <div className="file-upload-container">
-                      <div 
+                      <div
                         className="file-upload-area"
                         onDragOver={handleDragOver}
                         onDragLeave={handleDragLeave}
@@ -954,8 +882,8 @@ const FencerForm = ({ user, registrationData, onCompleteRegistration }) => {
                             <span>Uploading: {uploadProgress.aadharFront}%</span>
                           </div>
                           <div className="progress-bar-container">
-                            <div 
-                              className="progress-bar" 
+                            <div
+                              className="progress-bar"
                               style={{ width: `${uploadProgress.aadharFront}%` }}
                             ></div>
                           </div>
@@ -963,14 +891,13 @@ const FencerForm = ({ user, registrationData, onCompleteRegistration }) => {
                       )}
                     </div>
                   </div>
-
                   <div className="document-item">
                     <label className="document-label">
                       Aadhar Card Back *
                       <span className="document-requirement">(JPEG, JPG, PNG - Max 5MB)</span>
                     </label>
                     <div className="file-upload-container">
-                      <div 
+                      <div
                         className="file-upload-area"
                         onDragOver={handleDragOver}
                         onDragLeave={handleDragLeave}
@@ -1005,8 +932,8 @@ const FencerForm = ({ user, registrationData, onCompleteRegistration }) => {
                             <span>Uploading: {uploadProgress.aadharBack}%</span>
                           </div>
                           <div className="progress-bar-container">
-                            <div 
-                              className="progress-bar" 
+                            <div
+                              className="progress-bar"
                               style={{ width: `${uploadProgress.aadharBack}%` }}
                             ></div>
                           </div>
@@ -1014,14 +941,13 @@ const FencerForm = ({ user, registrationData, onCompleteRegistration }) => {
                       )}
                     </div>
                   </div>
-
                   <div className="document-item">
                     <label className="document-label">
                       Birth Certificate or 10th Certificate *
                       <span className="document-requirement">(PDF - Max 5MB)</span>
                     </label>
                     <div className="file-upload-container">
-                      <div 
+                      <div
                         className="file-upload-area"
                         onDragOver={handleDragOver}
                         onDragLeave={handleDragLeave}
@@ -1056,8 +982,8 @@ const FencerForm = ({ user, registrationData, onCompleteRegistration }) => {
                             <span>Uploading: {uploadProgress.birthCertificate}%</span>
                           </div>
                           <div className="progress-bar-container">
-                            <div 
-                              className="progress-bar" 
+                            <div
+                              className="progress-bar"
                               style={{ width: `${uploadProgress.birthCertificate}%` }}
                             ></div>
                           </div>
@@ -1066,12 +992,11 @@ const FencerForm = ({ user, registrationData, onCompleteRegistration }) => {
                     </div>
                   </div>
                 </div>
-
                 {/* Additional Documents */}
                 <div className="document-group additional">
                   <h3>Additional Documents (Optional)</h3>
                   <p className="document-subtitle">Supporting documents for your application</p>
-                  
+                 
                   {[1, 2, 3].map(num => (
                     <div key={num} className="document-item">
                       <label className="document-label">
@@ -1079,7 +1004,7 @@ const FencerForm = ({ user, registrationData, onCompleteRegistration }) => {
                         <span className="document-requirement">(PDF - Max 5MB)</span>
                       </label>
                       <div className="file-upload-container">
-                        <div 
+                        <div
                           className="file-upload-area"
                           onDragOver={handleDragOver}
                           onDragLeave={handleDragLeave}
@@ -1114,8 +1039,8 @@ const FencerForm = ({ user, registrationData, onCompleteRegistration }) => {
                               <span>Uploading: {uploadProgress[`doc${num}`]}%</span>
                             </div>
                             <div className="progress-bar-container">
-                              <div 
-                                className="progress-bar" 
+                              <div
+                                className="progress-bar"
                                 style={{ width: `${uploadProgress[`doc${num}`]}%` }}
                               ></div>
                             </div>
@@ -1126,7 +1051,6 @@ const FencerForm = ({ user, registrationData, onCompleteRegistration }) => {
                   ))}
                 </div>
               </div>
-
               {/* Upload Instructions */}
               <div className="upload-instructions">
                 <h4>Upload Instructions:</h4>
@@ -1139,7 +1063,6 @@ const FencerForm = ({ user, registrationData, onCompleteRegistration }) => {
                 </ul>
               </div>
             </section>
-
             {/* Payment Notice */}
             <section className="form-section">
               <h2 className="section-title">
@@ -1149,7 +1072,7 @@ const FencerForm = ({ user, registrationData, onCompleteRegistration }) => {
               <div className="payment-notice">
                 <h3>Registration Fee: ₹{REGISTRATION_FEE}</h3>
                 <p>Complete your registration by making the payment. You will be redirected to secure payment gateway.</p>
-                
+               
                 {/* Test mode indicator */}
                 {process.env.NODE_ENV !== 'production' && (
                   <div className="test-mode-banner">
@@ -1157,7 +1080,6 @@ const FencerForm = ({ user, registrationData, onCompleteRegistration }) => {
                     Test Mode - Using Sandbox Environment
                   </div>
                 )}
-
                 <div className="payment-features">
                   <div className="feature">
                     <i className="fas fa-shield-alt"></i>
@@ -1174,15 +1096,14 @@ const FencerForm = ({ user, registrationData, onCompleteRegistration }) => {
                 </div>
               </div>
             </section>
-
             <div className="form-actions step-actions">
               <button type="button" className="prev-btn" onClick={prevStep}>
                 <i className="fas fa-arrow-left"></i>
                 Previous
               </button>
-              <button 
-                type="submit" 
-                className="submit-btn payment-btn" 
+              <button
+                type="submit"
+                className="submit-btn payment-btn"
                 disabled={loading || paymentProcessing}
               >
                 {(loading || paymentProcessing) ? (
@@ -1204,5 +1125,4 @@ const FencerForm = ({ user, registrationData, onCompleteRegistration }) => {
     </div>
   );
 };
-
 export default FencerForm;

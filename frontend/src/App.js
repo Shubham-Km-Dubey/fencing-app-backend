@@ -4,7 +4,7 @@ import Home from './pages/Home';
 import Login from './components/Login';
 import UserDashboard from './pages/UserDashboard';
 import AdminDashboard from './components/Admin/AdminDashboard';
-import SuperAdminDashboard from './components/SuperAdmin/SuperAdminDashboard';
+import SuperAdminDashboard from './components/Admin/SuperAdmin/SuperAdminDashboard';
 import FencerForm from './components/Registration/FencerForm';
 import CoachForm from './components/Registration/CoachForm';
 import RefereeForm from './components/Registration/RefereeForm';

@@ -22,7 +22,16 @@ const UserSchema = new mongoose.Schema({
             return this.role !== 'super_admin';
         }
     },
+    // NEW FIELD — Stores the shortcode (e.g., NWD, SED, CD) from District.code
+    districtShortcode: {
+        type: String,
+        uppercase: true,
+        trim: true
+    },
     name: {
+        type: String
+    },
+    phone: {
         type: String
     },
     isApproved: {
@@ -57,10 +66,10 @@ const UserSchema = new mongoose.Schema({
     timestamps: true
 });
 
-// Fix the password hashing middleware
+// Password hashing middleware
 UserSchema.pre('save', async function(next) {
     if (!this.isModified('password')) {
-        next();
+        return next();
     }
     
     try {
@@ -72,7 +81,7 @@ UserSchema.pre('save', async function(next) {
     }
 });
 
-// Fix the password comparison method
+// Password comparison method
 UserSchema.methods.matchPassword = async function(enteredPassword) {
     return await bcrypt.compare(enteredPassword, this.password);
 };
