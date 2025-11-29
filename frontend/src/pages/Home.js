@@ -1,7 +1,11 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import '../styles/Home.css';
+
+const API_BASE_URL = process.env.NODE_ENV === 'development' 
+  ? 'http://localhost:5000'
+  : 'https://fencing-app-backend.onrender.com';
 
 const Home = ({ onLogin, onStartRegistration }) => {
   const [loginData, setLoginData] = useState({
@@ -18,7 +22,39 @@ const Home = ({ onLogin, onStartRegistration }) => {
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
   const [showDemoCredentials, setShowDemoCredentials] = useState(false);
+  const [registrationFees, setRegistrationFees] = useState({});
+  const [feesLoading, setFeesLoading] = useState(true);
   const navigate = useNavigate();
+
+  // Fetch registration fees from API
+  useEffect(() => {
+    const fetchRegistrationFees = async () => {
+      try {
+        const response = await axios.get(`${API_BASE_URL}/api/fees`);
+        if (response.data.success) {
+          const feesMap = {};
+          response.data.data.forEach(fee => {
+            feesMap[fee.userType] = fee.amount;
+          });
+          setRegistrationFees(feesMap);
+        }
+      } catch (error) {
+        console.error('Failed to fetch registration fees:', error);
+        // Fallback to default fees if API fails
+        setRegistrationFees({
+          fencer: 500,
+          coach: 1000,
+          referee: 800,
+          school: 2000,
+          club: 3000
+        });
+      } finally {
+        setFeesLoading(false);
+      }
+    };
+
+    fetchRegistrationFees();
+  }, []);
 
   const handleLoginChange = (e) => {
     setLoginData({
@@ -33,7 +69,7 @@ const Home = ({ onLogin, onStartRegistration }) => {
     setMessage('');
     
     try {
-      const response = await axios.post('http://localhost:5000/api/auth/login', loginData);
+      const response = await axios.post(`${API_BASE_URL}/api/auth/login`, loginData);
       onLogin(response.data);
       setMessage('Login successful! Redirecting...');
     } catch (error) {
@@ -48,7 +84,7 @@ const Home = ({ onLogin, onStartRegistration }) => {
     navigate(`/register/${userType}`);
   };
 
-  // User type cards data
+  // User type cards data with dynamic fees
   const userTypes = [
     {
       type: 'fencer',
@@ -56,7 +92,7 @@ const Home = ({ onLogin, onStartRegistration }) => {
       icon: 'fas fa-user',
       description: 'Individual fencing athlete registration',
       duration: '1 Year',
-      fee: '₹500',
+      fee: feesLoading ? 'Loading...' : `₹${registrationFees.fencer || 500}`,
       features: ['Tournament Participation', 'Ranking System', 'Training Log', 'Official Certificate'],
       color: '#4299e1'
     },
@@ -66,7 +102,7 @@ const Home = ({ onLogin, onStartRegistration }) => {
       icon: 'fas fa-chalkboard-teacher',
       description: 'Professional fencing coach registration',
       duration: '1 Year',
-      fee: '₹1000',
+      fee: feesLoading ? 'Loading...' : `₹${registrationFees.coach || 1000}`,
       features: ['Coach Certification', 'Student Management', 'Training Programs', 'Performance Analytics'],
       color: '#38a169'
     },
@@ -76,7 +112,7 @@ const Home = ({ onLogin, onStartRegistration }) => {
       icon: 'fas fa-whistle',
       description: 'Official referee and judge registration',
       duration: '1 Year',
-      fee: '₹750',
+      fee: feesLoading ? 'Loading...' : `₹${registrationFees.referee || 800}`,
       features: ['Referee Certification', 'Match Assignments', 'Rule Updates', 'Workshop Access'],
       color: '#ed8936'
     },
@@ -86,7 +122,7 @@ const Home = ({ onLogin, onStartRegistration }) => {
       icon: 'fas fa-school',
       description: 'Educational institution registration',
       duration: '1 Year',
-      fee: '₹2000',
+      fee: feesLoading ? 'Loading...' : `₹${registrationFees.school || 2000}`,
       features: ['Team Management', 'Event Hosting', 'Coach Portal', 'Student Portal'],
       color: '#9f7aea'
     },
@@ -96,7 +132,7 @@ const Home = ({ onLogin, onStartRegistration }) => {
       icon: 'fas fa-users',
       description: 'Fencing club and academy registration',
       duration: '1 Year',
-      fee: '₹1500',
+      fee: feesLoading ? 'Loading...' : `₹${registrationFees.club || 3000}`,
       features: ['Member Management', 'Facility Booking', 'Event Management', 'Branding Rights'],
       color: '#f56565'
     }

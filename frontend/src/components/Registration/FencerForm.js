@@ -1,21 +1,22 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import '../../styles/FencerForm.css';
+
 // API configuration
 const API_BASE_URL = process.env.NODE_ENV === 'development'
   ? 'http://localhost:5000'
   : 'https://fencing-app-backend.onrender.com';
-// Registration fee amount (in INR)
-const REGISTRATION_FEE = 500;
+
 const FencerForm = ({ user, registrationData, onCompleteRegistration }) => {
   const [currentStep, setCurrentStep] = useState(1);
+  const [districts, setDistricts] = useState([]);
+  const [loadingDistricts, setLoadingDistricts] = useState(false);
+  const [registrationFee, setRegistrationFee] = useState(500);
+  const [feeLoading, setFeeLoading] = useState(true);
   const [formData, setFormData] = useState({
-    // Login Credentials
     email: '',
     password: '',
     confirmPassword: '',
-   
-    // Personal Information
     firstName: '',
     middleName: '',
     lastName: '',
@@ -24,8 +25,6 @@ const FencerForm = ({ user, registrationData, onCompleteRegistration }) => {
     mothersName: '',
     mobileNumber: '',
     dateOfBirth: '',
-   
-    // Address Information
     permanentAddress: {
       addressLine1: '',
       addressLine2: '',
@@ -40,16 +39,10 @@ const FencerForm = ({ user, registrationData, onCompleteRegistration }) => {
       district: '',
       pinCode: ''
     },
-   
-    // Fencing Information
     highestAchievement: '',
     coachName: '',
     trainingCenter: '',
-   
-    // District Information
     selectedDistrict: '',
-   
-    // Document URLs (will be set after upload)
     documents: {
       passportPhoto: '',
       aadharFront: '',
@@ -65,6 +58,83 @@ const FencerForm = ({ user, registrationData, onCompleteRegistration }) => {
   const [uploadProgress, setUploadProgress] = useState({});
   const [isSameAddress, setIsSameAddress] = useState(false);
   const [paymentProcessing, setPaymentProcessing] = useState(false);
+  const [paymentVerified, setPaymentVerified] = useState(false);
+  const [orderId, setOrderId] = useState(null);
+
+  // Fetch districts from API
+  useEffect(() => {
+    const fetchDistricts = async () => {
+      setLoadingDistricts(true);
+      try {
+        const response = await axios.get(`${API_BASE_URL}/api/register/districts`);
+        if (response.data.success) {
+          setDistricts(response.data.data);
+        }
+      } catch (error) {
+        console.error('Failed to fetch districts:', error);
+        setMessage('Failed to load districts. Please refresh the page.');
+      } finally {
+        setLoadingDistricts(false);
+      }
+    };
+    fetchDistricts();
+  }, []);
+
+  // Fetch registration fee from API
+  useEffect(() => {
+    const fetchRegistrationFee = async () => {
+      try {
+        const response = await axios.get(`${API_BASE_URL}/api/fees/fencer`);
+        if (response.data.success) {
+          setRegistrationFee(response.data.data.amount);
+        }
+      } catch (error) {
+        console.error('Failed to fetch registration fee:', error);
+        setRegistrationFee(500);
+      } finally {
+        setFeeLoading(false);
+      }
+    };
+    fetchRegistrationFee();
+  }, []);
+
+  // Check for pending payments on component mount
+  useEffect(() => {
+    const checkPendingPayment = async () => {
+      const pendingOrderId = localStorage.getItem('pendingPaymentOrderId');
+      const pendingUserType = localStorage.getItem('pendingPaymentUserType');
+      
+      if (pendingOrderId && pendingUserType === 'fencer') {
+        setMessage('Checking pending payment status...');
+        setLoading(true);
+        
+        try {
+          const paymentResult = await checkPaymentStatus(pendingOrderId);
+          
+          if (paymentResult.success) {
+            setMessage('Payment verified! Registration completed.');
+            setPaymentVerified(true);
+            localStorage.removeItem('pendingPaymentOrderId');
+            localStorage.removeItem('pendingPaymentUserType');
+            setTimeout(() => {
+              onCompleteRegistration();
+            }, 2000);
+          } else {
+            setMessage(`Payment check failed: ${paymentResult.error}`);
+            localStorage.removeItem('pendingPaymentOrderId');
+            localStorage.removeItem('pendingPaymentUserType');
+          }
+        } catch (error) {
+          console.error('Pending payment check error:', error);
+          setMessage('Failed to check payment status');
+        } finally {
+          setLoading(false);
+        }
+      }
+    };
+    checkPendingPayment();
+  }, [onCompleteRegistration]);
+
   // Pre-fill email and district if available from registration
   useEffect(() => {
     if (registrationData) {
@@ -75,6 +145,7 @@ const FencerForm = ({ user, registrationData, onCompleteRegistration }) => {
       }));
     }
   }, [registrationData, user]);
+
   const handleInputChange = (e) => {
     const { name, value } = e.target;
    
@@ -94,6 +165,7 @@ const FencerForm = ({ user, registrationData, onCompleteRegistration }) => {
       }));
     }
   };
+
   const handleAddressCopy = () => {
     if (isSameAddress) {
       setFormData(prev => ({
@@ -113,12 +185,13 @@ const FencerForm = ({ user, registrationData, onCompleteRegistration }) => {
       }));
     }
   };
+
   useEffect(() => {
     handleAddressCopy();
   }, [isSameAddress]);
+
   const nextStep = () => {
     if (currentStep === 1) {
-      // Validate email and password
       if (!formData.email || !formData.password || !formData.confirmPassword) {
         setMessage('Please fill all required fields in login credentials');
         return;
@@ -132,13 +205,32 @@ const FencerForm = ({ user, registrationData, onCompleteRegistration }) => {
         return;
       }
     }
+    
+    if (currentStep === 2) {
+      // Enhanced validation for step 2
+      if (!formData.firstName || !formData.lastName || !formData.aadharNumber || !formData.mobileNumber) {
+        setMessage('Please fill all required personal information fields');
+        return;
+      }
+      if (!formData.selectedDistrict) {
+        setMessage('Please select your district');
+        return;
+      }
+      if (!formData.permanentAddress.addressLine1 || !formData.permanentAddress.state || !formData.permanentAddress.district || !formData.permanentAddress.pinCode) {
+        setMessage('Please fill all required address fields');
+        return;
+      }
+    }
+
     setCurrentStep(prev => prev + 1);
     setMessage('');
   };
+
   const prevStep = () => {
     setCurrentStep(prev => prev - 1);
     setMessage('');
   };
+
   const handleFileUpload = async (file, fieldName) => {
     const uploadFormData = new FormData();
     uploadFormData.append('file', file);
@@ -159,7 +251,7 @@ const FencerForm = ({ user, registrationData, onCompleteRegistration }) => {
           }
         }
       );
-      // Check if upload was successful
+
       if (response.data.success) {
         setFormData(prev => ({
           ...prev,
@@ -168,13 +260,6 @@ const FencerForm = ({ user, registrationData, onCompleteRegistration }) => {
             [fieldName]: response.data.data.downloadURL
           }
         }));
-       
-        // Debug log
-        console.log(`File ${fieldName} uploaded successfully:`, {
-          field: fieldName,
-          url: response.data.data.downloadURL,
-          documentState: formData.documents
-        });
        
         setUploadProgress(prev => ({ ...prev, [fieldName]: null }));
         return response.data.data.downloadURL;
@@ -188,13 +273,14 @@ const FencerForm = ({ user, registrationData, onCompleteRegistration }) => {
       return null;
     }
   };
+
   const handleFileChange = (e, fieldName) => {
     const file = e.target.files[0];
     if (file) {
-      // Validate file type and size
       const validImageTypes = ['image/jpeg', 'image/jpg', 'image/png'];
       const validPdfTypes = ['application/pdf'];
-      const maxSize = 5 * 1024 * 1024; // 5MB
+      const maxSize = 5 * 1024 * 1024;
+      
       if (fieldName.includes('Photo') || fieldName.includes('aadhar')) {
         if (!validImageTypes.includes(file.type)) {
           setMessage('Please upload JPEG, JPG or PNG images only.');
@@ -206,22 +292,27 @@ const FencerForm = ({ user, registrationData, onCompleteRegistration }) => {
           return;
         }
       }
+      
       if (file.size > maxSize) {
         setMessage('File size should be less than 5MB.');
         return;
       }
+      
       handleFileUpload(file, fieldName);
     }
   };
+
   // Drag and Drop Functions
   const handleDragOver = (e) => {
     e.preventDefault();
     e.currentTarget.classList.add('drag-over');
   };
+
   const handleDragLeave = (e) => {
     e.preventDefault();
     e.currentTarget.classList.remove('drag-over');
   };
+
   const handleDrop = (e, fieldName) => {
     e.preventDefault();
     e.currentTarget.classList.remove('drag-over');
@@ -231,44 +322,145 @@ const FencerForm = ({ user, registrationData, onCompleteRegistration }) => {
       handleFileChange({ target: { files } }, fieldName);
     }
   };
-  // Create payment session
+
+  // PAYMENT FUNCTIONS - ENHANCED VERSION
   const createPaymentSession = async (orderData) => {
     try {
-      const response = await fetch(`${API_BASE_URL}/api/payments/create-session`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(orderData),
-      });
-      if (!response.ok) {
-        throw new Error('Failed to create payment session');
-      }
-      const data = await response.json();
-      return data;
+      console.log('🔄 Creating payment session with data:', orderData);
+      const response = await axios.post(`${API_BASE_URL}/api/payments/create-session`, orderData);
+      console.log('✅ Payment session response:', response.data);
+      return response.data;
     } catch (error) {
-      console.error('Payment session error:', error);
-      throw error;
+      console.error('❌ Payment session error:', error.response?.data || error.message);
+      throw new Error(error.response?.data?.error || 'Failed to create payment session');
     }
   };
-  // Initiate payment process
-  const initiatePayment = async (fencerData) => {
+
+  const verifyPayment = async (orderId) => {
+    try {
+      console.log('🔄 Verifying payment for order:', orderId);
+      const response = await axios.get(`${API_BASE_URL}/api/payments/verify/${orderId}`);
+      console.log('✅ Payment verification response:', response.data);
+      return response.data;
+    } catch (error) {
+      console.error('❌ Payment verification error:', error.response?.data || error.message);
+      throw new Error(error.response?.data?.error || 'Failed to verify payment');
+    }
+  };
+
+  const checkPaymentStatus = async (orderId, maxAttempts = 30) => {
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        console.log(`🔄 Payment check attempt ${attempt}/${maxAttempts}`);
+        const result = await verifyPayment(orderId);
+        
+        if (result.data?.payment_status === 'SUCCESS' || result.data?.order_status === 'PAID') {
+          console.log('✅ Payment successful!');
+          return { success: true, data: result.data };
+        } else if (result.data?.payment_status === 'FAILED') {
+          console.log('❌ Payment failed');
+          return { success: false, error: 'Payment failed' };
+        }
+        
+        console.log('⏳ Payment still processing, waiting...');
+        await new Promise(resolve => setTimeout(resolve, 2000));
+      } catch (error) {
+        console.error(`❌ Payment check attempt ${attempt} failed:`, error);
+      }
+    }
+    
+    return { success: false, error: 'Payment verification timeout' };
+  };
+
+  const initiatePayment = async () => {
     try {
       setPaymentProcessing(true);
-      setMessage('Redirecting to payment gateway...');
+      setMessage('Creating payment session...');
+      
+      // First register the user if not already registered
+      if (!user) {
+        setMessage('Creating user account...');
+        const userRegistrationData = {
+          email: formData.email,
+          password: formData.password,
+          role: 'fencer',
+          district: formData.selectedDistrict,
+          districtShortcode: formData.selectedDistrict.toUpperCase().replace(' ', '_'),
+          name: `${formData.firstName} ${formData.lastName}`.trim(),
+          phone: formData.mobileNumber || '9999999999'
+        };
+
+        console.log('👤 Registering user:', userRegistrationData);
+
+        try {
+          const registerResponse = await axios.post(`${API_BASE_URL}/api/auth/register`, userRegistrationData);
+          console.log('✅ User registration successful:', registerResponse.data);
+          setMessage('User account created. Proceeding to payment...');
+        } catch (error) {
+          console.error('❌ User registration error:', error.response?.data || error.message);
+          // If user already exists, continue with payment - don't throw error
+          if (error.response?.status === 400 && error.response?.data?.message?.includes('already exists')) {
+            console.log('ℹ️ User already exists, continuing with payment...');
+            setMessage('User account exists. Proceeding to payment...');
+            // Don't throw error - just continue with payment
+          } else {
+            throw new Error('User registration failed: ' + (error.response?.data?.message || error.message));
+          }
+        }
+      }
+
       const orderData = {
-        orderAmount: REGISTRATION_FEE,
+        orderAmount: registrationFee,
         customerName: `${formData.firstName} ${formData.lastName}`.trim(),
         customerEmail: formData.email,
         customerPhone: formData.mobileNumber || '9999999999',
-        fencerData: fencerData
+        userType: 'fencer',
+        registrationData: {
+          ...formData,
+          userId: user?._id,
+          paymentAmount: registrationFee,
+          paymentStatus: 'PENDING'
+        }
       };
-      // Create payment session
+
+      console.log('💰 Payment order data:', orderData);
+
       const paymentSession = await createPaymentSession(orderData);
+      
       if (paymentSession.success) {
-        // Redirect to Cashfree payment page
+        setOrderId(paymentSession.data.order_id);
+        
+        localStorage.setItem('pendingPaymentOrderId', paymentSession.data.order_id);
+        localStorage.setItem('pendingPaymentUserType', 'fencer');
+        
         if (paymentSession.data.payment_url) {
-          window.location.href = paymentSession.data.payment_url;
+          console.log('🔗 Payment URL received:', paymentSession.data.payment_url);
+          
+          // For mock payments
+          if (paymentSession.data.payment_url.includes('/mock-payment')) {
+            setMessage('Processing test payment...');
+            await new Promise(resolve => setTimeout(resolve, 3000));
+            
+            const paymentResult = await checkPaymentStatus(paymentSession.data.order_id);
+            
+            if (paymentResult.success) {
+              setMessage('Payment successful! Registration completed.');
+              setPaymentVerified(true);
+              setTimeout(() => {
+                onCompleteRegistration();
+                localStorage.removeItem('pendingPaymentOrderId');
+                localStorage.removeItem('pendingPaymentUserType');
+              }, 2000);
+            } else {
+              setMessage(`Payment failed: ${paymentResult.error}`);
+              setPaymentProcessing(false);
+              setLoading(false);
+            }
+          } else {
+            // Real Cashfree payment - redirect
+            console.log('🔗 Redirecting to Cashfree payment page...');
+            window.location.href = paymentSession.data.payment_url;
+          }
         } else {
           throw new Error('Payment URL not received');
         }
@@ -276,50 +468,53 @@ const FencerForm = ({ user, registrationData, onCompleteRegistration }) => {
         throw new Error(paymentSession.error || 'Payment initiation failed');
       }
     } catch (error) {
-      console.error('Payment initiation error:', error);
+      console.error('❌ Payment initiation error:', error);
       setMessage(`Payment failed: ${error.message}`);
       setPaymentProcessing(false);
       setLoading(false);
     }
   };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     setLoading(true);
     setMessage('');
+    
     try {
       // Validate required documents
       const requiredDocs = ['passportPhoto', 'aadharFront', 'aadharBack', 'birthCertificate'];
       const missingDocs = requiredDocs.filter(doc => !formData.documents[doc]);
+      
       if (missingDocs.length > 0) {
         setMessage(`Please upload all required documents: ${missingDocs.join(', ')}`);
         setLoading(false);
         return;
       }
-      const submissionData = {
-        ...formData,
-        userId: user?._id
-      };
-      // Debug: Check document URLs before submission
-      console.log('Submitting with documents:', formData.documents);
-      // First save fencer registration
-      const response = await axios.post(`${API_BASE_URL}/api/fencer/register`, submissionData);
-     
-      if (response.data.success) {
-        setMessage('Registration submitted successfully! Redirecting to payment...');
-       
-        // Initiate payment process
-        await initiatePayment(response.data.data);
-      } else {
-        throw new Error(response.data.error || 'Registration failed');
+
+      if (!formData.selectedDistrict) {
+        setMessage('Please select your district');
+        setLoading(false);
+        return;
       }
+
+      // Validate personal information
+      if (!formData.firstName || !formData.lastName || !formData.aadharNumber || !formData.mobileNumber) {
+        setMessage('Please fill all required personal information fields');
+        setLoading(false);
+        return;
+      }
+
+      console.log('🚀 Starting payment process...');
+      await initiatePayment();
+      
     } catch (error) {
+      console.error('❌ Registration error:', error);
       setMessage(error.response?.data?.message || 'Registration failed. Please try again.');
-      console.error('Registration error:', error);
     } finally {
       setLoading(false);
     }
   };
-  const districts = ['North East', 'North West', 'South East', 'South West', 'Central'];
+
   // Step indicator component
   const StepIndicator = () => (
     <div className="step-indicator">
@@ -337,20 +532,23 @@ const FencerForm = ({ user, registrationData, onCompleteRegistration }) => {
       </div>
     </div>
   );
+
   return (
     <div className="fencer-form-container">
       <div className="form-header">
         <h1>Fencer Registration</h1>
         <p>Complete your profile to join Delhi Fencing Association</p>
       </div>
+      
       <StepIndicator />
+      
       {message && (
         <div className={`message ${message.includes('successful') ? 'success' : 'error'}`}>
           {message}
         </div>
       )}
+
       <form onSubmit={handleSubmit} className="fencer-form">
-       
         {/* Step 1: Login Credentials */}
         {currentStep === 1 && (
           <section className="form-section login-credentials-section">
@@ -374,6 +572,7 @@ const FencerForm = ({ user, registrationData, onCompleteRegistration }) => {
                 />
               </div>
             </div>
+            
             <div className="form-row">
               <div className="form-group">
                 <label htmlFor="password">Password *</label>
@@ -397,6 +596,7 @@ const FencerForm = ({ user, registrationData, onCompleteRegistration }) => {
                   </div>
                 )}
               </div>
+              
               <div className="form-group">
                 <label htmlFor="confirmPassword">Confirm Password *</label>
                 <input
@@ -416,8 +616,9 @@ const FencerForm = ({ user, registrationData, onCompleteRegistration }) => {
                 )}
               </div>
             </div>
+            
             <div className="form-actions step-actions">
-              <div></div> {/* Empty div for spacing */}
+              <div></div>
               <button type="button" className="next-btn" onClick={nextStep}>
                 Next: Personal Information
                 <i className="fas fa-arrow-right"></i>
@@ -425,6 +626,7 @@ const FencerForm = ({ user, registrationData, onCompleteRegistration }) => {
             </div>
           </section>
         )}
+
         {/* Step 2: Personal & Fencing Information */}
         {currentStep === 2 && (
           <>
@@ -472,6 +674,7 @@ const FencerForm = ({ user, registrationData, onCompleteRegistration }) => {
                   />
                 </div>
               </div>
+              
               <div className="form-row">
                 <div className="form-group">
                   <label htmlFor="aadharNumber">Aadhar Number *</label>
@@ -512,6 +715,7 @@ const FencerForm = ({ user, registrationData, onCompleteRegistration }) => {
                   />
                 </div>
               </div>
+              
               <div className="form-row">
                 <div className="form-group">
                   <label htmlFor="mobileNumber">Mobile Number *</label>
@@ -541,12 +745,14 @@ const FencerForm = ({ user, registrationData, onCompleteRegistration }) => {
                 </div>
               </div>
             </section>
+
             {/* Address Information Section */}
             <section className="form-section">
               <h2 className="section-title">
                 <i className="fas fa-home"></i>
                 Address Information
               </h2>
+              
               {/* Permanent Address */}
               <div className="address-section">
                 <h3>Permanent Address *</h3>
@@ -618,6 +824,7 @@ const FencerForm = ({ user, registrationData, onCompleteRegistration }) => {
                   </div>
                 </div>
               </div>
+              
               {/* Present Address */}
               <div className="address-section">
                 <div className="address-copy-toggle">
@@ -704,6 +911,7 @@ const FencerForm = ({ user, registrationData, onCompleteRegistration }) => {
                 )}
               </div>
             </section>
+
             {/* Fencing Information Section */}
             <section className="form-section">
               <h2 className="section-title">
@@ -712,19 +920,28 @@ const FencerForm = ({ user, registrationData, onCompleteRegistration }) => {
               </h2>
               <div className="form-row">
                 <div className="form-group">
-                  <label htmlFor="selectedDistrict">Select District *</label>
+                  <label htmlFor="selectedDistrict">Select District Association *</label>
                   <select
                     id="selectedDistrict"
                     name="selectedDistrict"
                     value={formData.selectedDistrict}
                     onChange={handleInputChange}
                     required
+                    disabled={loadingDistricts}
                   >
-                    <option value="">Choose your district</option>
+                    <option value="">{loadingDistricts ? 'Loading districts...' : 'Choose your district association'}</option>
                     {districts.map(district => (
-                      <option key={district} value={district}>{district}</option>
+                      <option key={district._id} value={district.name}>
+                        {district.name} {district.adminName && `- Admin: ${district.adminName}`}
+                      </option>
                     ))}
                   </select>
+                  {loadingDistricts && (
+                    <div className="loading-text">Loading available districts...</div>
+                  )}
+                  {districts.length === 0 && !loadingDistricts && (
+                    <div className="info-text">No districts available. Please contact administrator.</div>
+                  )}
                 </div>
                 <div className="form-group">
                   <label htmlFor="coachName">Coach Name</label>
@@ -763,6 +980,7 @@ const FencerForm = ({ user, registrationData, onCompleteRegistration }) => {
                 </div>
               </div>
             </section>
+            
             <div className="form-actions step-actions">
               <button type="button" className="prev-btn" onClick={prevStep}>
                 <i className="fas fa-arrow-left"></i>
@@ -775,6 +993,7 @@ const FencerForm = ({ user, registrationData, onCompleteRegistration }) => {
             </div>
           </>
         )}
+
         {/* Step 3: Documents & Payment */}
         {currentStep === 3 && (
           <>
@@ -785,213 +1004,74 @@ const FencerForm = ({ user, registrationData, onCompleteRegistration }) => {
                 Documents Upload
               </h2>
               <p className="section-subtitle">Upload all required documents. Maximum file size: 5MB per file</p>
+              
               <div className="documents-grid">
                 {/* Required Documents */}
                 <div className="document-group required">
                   <h3>Required Documents</h3>
                   <p className="document-subtitle">These documents are mandatory for registration</p>
                  
-                  <div className="document-item">
-                    <label className="document-label">
-                      Passport Size Photo *
-                      <span className="document-requirement">(JPEG, JPG, PNG - Max 5MB)</span>
-                    </label>
-                    <div className="file-upload-container">
-                      <div
-                        className="file-upload-area"
-                        onDragOver={handleDragOver}
-                        onDragLeave={handleDragLeave}
-                        onDrop={(e) => handleDrop(e, 'passportPhoto')}
-                      >
-                        <input
-                          type="file"
-                          accept=".jpg,.jpeg,.png"
-                          onChange={(e) => handleFileChange(e, 'passportPhoto')}
-                          className="file-input"
-                        />
-                        <div className="upload-content">
-                          <i className="fas fa-camera"></i>
-                          <div className="upload-text">
-                            {formData.documents.passportPhoto ? (
-                              <div className="file-success">
-                                <i className="fas fa-check-circle"></i>
-                                <span>Photo Uploaded Successfully</span>
-                              </div>
-                            ) : (
-                              <>
-                                <span className="upload-title">Click to upload passport photo</span>
-                                <span className="upload-subtitle">or drag and drop</span>
-                              </>
-                            )}
+                  {[
+                    { key: 'passportPhoto', label: 'Passport Size Photo', type: 'image', icon: 'camera' },
+                    { key: 'aadharFront', label: 'Aadhar Card Front', type: 'image', icon: 'id-card' },
+                    { key: 'aadharBack', label: 'Aadhar Card Back', type: 'image', icon: 'id-card' },
+                    { key: 'birthCertificate', label: 'Birth Certificate or 10th Certificate', type: 'pdf', icon: 'file-pdf' }
+                  ].map((doc) => (
+                    <div key={doc.key} className="document-item">
+                      <label className="document-label">
+                        {doc.label} *
+                        <span className="document-requirement">
+                          ({doc.type === 'image' ? 'JPEG, JPG, PNG - Max 5MB' : 'PDF - Max 5MB'})
+                        </span>
+                      </label>
+                      <div className="file-upload-container">
+                        <div
+                          className="file-upload-area"
+                          onDragOver={handleDragOver}
+                          onDragLeave={handleDragLeave}
+                          onDrop={(e) => handleDrop(e, doc.key)}
+                        >
+                          <input
+                            type="file"
+                            accept={doc.type === 'image' ? '.jpg,.jpeg,.png' : '.pdf'}
+                            onChange={(e) => handleFileChange(e, doc.key)}
+                            className="file-input"
+                          />
+                          <div className="upload-content">
+                            <i className={`fas fa-${doc.icon}`}></i>
+                            <div className="upload-text">
+                              {formData.documents[doc.key] ? (
+                                <div className="file-success">
+                                  <i className="fas fa-check-circle"></i>
+                                  <span>{doc.label} Uploaded</span>
+                                </div>
+                              ) : (
+                                <>
+                                  <span className="upload-title">Click to upload {doc.label.toLowerCase()}</span>
+                                  <span className="upload-subtitle">or drag and drop {doc.type === 'image' ? 'image' : 'PDF'}</span>
+                                </>
+                              )}
+                            </div>
                           </div>
                         </div>
+                        {uploadProgress[doc.key] !== null && uploadProgress[doc.key] !== undefined && (
+                          <div className="upload-progress">
+                            <div className="progress-info">
+                              <span>Uploading: {uploadProgress[doc.key]}%</span>
+                            </div>
+                            <div className="progress-bar-container">
+                              <div
+                                className="progress-bar"
+                                style={{ width: `${uploadProgress[doc.key]}%` }}
+                              ></div>
+                            </div>
+                          </div>
+                        )}
                       </div>
-                      {uploadProgress.passportPhoto !== null && uploadProgress.passportPhoto !== undefined && (
-                        <div className="upload-progress">
-                          <div className="progress-info">
-                            <span>Uploading: {uploadProgress.passportPhoto}%</span>
-                          </div>
-                          <div className="progress-bar-container">
-                            <div
-                              className="progress-bar"
-                              style={{ width: `${uploadProgress.passportPhoto}%` }}
-                            ></div>
-                          </div>
-                        </div>
-                      )}
                     </div>
-                  </div>
-                  <div className="document-item">
-                    <label className="document-label">
-                      Aadhar Card Front *
-                      <span className="document-requirement">(JPEG, JPG, PNG - Max 5MB)</span>
-                    </label>
-                    <div className="file-upload-container">
-                      <div
-                        className="file-upload-area"
-                        onDragOver={handleDragOver}
-                        onDragLeave={handleDragLeave}
-                        onDrop={(e) => handleDrop(e, 'aadharFront')}
-                      >
-                        <input
-                          type="file"
-                          accept=".jpg,.jpeg,.png"
-                          onChange={(e) => handleFileChange(e, 'aadharFront')}
-                          className="file-input"
-                        />
-                        <div className="upload-content">
-                          <i className="fas fa-id-card"></i>
-                          <div className="upload-text">
-                            {formData.documents.aadharFront ? (
-                              <div className="file-success">
-                                <i className="fas fa-check-circle"></i>
-                                <span>Aadhar Front Uploaded</span>
-                              </div>
-                            ) : (
-                              <>
-                                <span className="upload-title">Click to upload Aadhar front</span>
-                                <span className="upload-subtitle">or drag and drop</span>
-                              </>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                      {uploadProgress.aadharFront !== null && uploadProgress.aadharFront !== undefined && (
-                        <div className="upload-progress">
-                          <div className="progress-info">
-                            <span>Uploading: {uploadProgress.aadharFront}%</span>
-                          </div>
-                          <div className="progress-bar-container">
-                            <div
-                              className="progress-bar"
-                              style={{ width: `${uploadProgress.aadharFront}%` }}
-                            ></div>
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                  <div className="document-item">
-                    <label className="document-label">
-                      Aadhar Card Back *
-                      <span className="document-requirement">(JPEG, JPG, PNG - Max 5MB)</span>
-                    </label>
-                    <div className="file-upload-container">
-                      <div
-                        className="file-upload-area"
-                        onDragOver={handleDragOver}
-                        onDragLeave={handleDragLeave}
-                        onDrop={(e) => handleDrop(e, 'aadharBack')}
-                      >
-                        <input
-                          type="file"
-                          accept=".jpg,.jpeg,.png"
-                          onChange={(e) => handleFileChange(e, 'aadharBack')}
-                          className="file-input"
-                        />
-                        <div className="upload-content">
-                          <i className="fas fa-id-card"></i>
-                          <div className="upload-text">
-                            {formData.documents.aadharBack ? (
-                              <div className="file-success">
-                                <i className="fas fa-check-circle"></i>
-                                <span>Aadhar Back Uploaded</span>
-                              </div>
-                            ) : (
-                              <>
-                                <span className="upload-title">Click to upload Aadhar back</span>
-                                <span className="upload-subtitle">or drag and drop</span>
-                              </>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                      {uploadProgress.aadharBack !== null && uploadProgress.aadharBack !== undefined && (
-                        <div className="upload-progress">
-                          <div className="progress-info">
-                            <span>Uploading: {uploadProgress.aadharBack}%</span>
-                          </div>
-                          <div className="progress-bar-container">
-                            <div
-                              className="progress-bar"
-                              style={{ width: `${uploadProgress.aadharBack}%` }}
-                            ></div>
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                  <div className="document-item">
-                    <label className="document-label">
-                      Birth Certificate or 10th Certificate *
-                      <span className="document-requirement">(PDF - Max 5MB)</span>
-                    </label>
-                    <div className="file-upload-container">
-                      <div
-                        className="file-upload-area"
-                        onDragOver={handleDragOver}
-                        onDragLeave={handleDragLeave}
-                        onDrop={(e) => handleDrop(e, 'birthCertificate')}
-                      >
-                        <input
-                          type="file"
-                          accept=".pdf"
-                          onChange={(e) => handleFileChange(e, 'birthCertificate')}
-                          className="file-input"
-                        />
-                        <div className="upload-content">
-                          <i className="fas fa-file-pdf"></i>
-                          <div className="upload-text">
-                            {formData.documents.birthCertificate ? (
-                              <div className="file-success">
-                                <i className="fas fa-check-circle"></i>
-                                <span>Certificate Uploaded</span>
-                              </div>
-                            ) : (
-                              <>
-                                <span className="upload-title">Click to upload certificate</span>
-                                <span className="upload-subtitle">or drag and drop PDF</span>
-                              </>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                      {uploadProgress.birthCertificate !== null && uploadProgress.birthCertificate !== undefined && (
-                        <div className="upload-progress">
-                          <div className="progress-info">
-                            <span>Uploading: {uploadProgress.birthCertificate}%</span>
-                          </div>
-                          <div className="progress-bar-container">
-                            <div
-                              className="progress-bar"
-                              style={{ width: `${uploadProgress.birthCertificate}%` }}
-                            ></div>
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  </div>
+                  ))}
                 </div>
+
                 {/* Additional Documents */}
                 <div className="document-group additional">
                   <h3>Additional Documents (Optional)</h3>
@@ -1051,6 +1131,7 @@ const FencerForm = ({ user, registrationData, onCompleteRegistration }) => {
                   ))}
                 </div>
               </div>
+
               {/* Upload Instructions */}
               <div className="upload-instructions">
                 <h4>Upload Instructions:</h4>
@@ -1063,6 +1144,7 @@ const FencerForm = ({ user, registrationData, onCompleteRegistration }) => {
                 </ul>
               </div>
             </section>
+
             {/* Payment Notice */}
             <section className="form-section">
               <h2 className="section-title">
@@ -1070,16 +1152,16 @@ const FencerForm = ({ user, registrationData, onCompleteRegistration }) => {
                 Payment Information
               </h2>
               <div className="payment-notice">
-                <h3>Registration Fee: ₹{REGISTRATION_FEE}</h3>
+                <h3>Registration Fee: ₹{registrationFee}</h3>
                 <p>Complete your registration by making the payment. You will be redirected to secure payment gateway.</p>
                
-                {/* Test mode indicator */}
                 {process.env.NODE_ENV !== 'production' && (
                   <div className="test-mode-banner">
                     <i className="fas fa-vial"></i>
                     Test Mode - Using Sandbox Environment
                   </div>
                 )}
+                
                 <div className="payment-features">
                   <div className="feature">
                     <i className="fas fa-shield-alt"></i>
@@ -1096,6 +1178,7 @@ const FencerForm = ({ user, registrationData, onCompleteRegistration }) => {
                 </div>
               </div>
             </section>
+
             <div className="form-actions step-actions">
               <button type="button" className="prev-btn" onClick={prevStep}>
                 <i className="fas fa-arrow-left"></i>
@@ -1104,9 +1187,14 @@ const FencerForm = ({ user, registrationData, onCompleteRegistration }) => {
               <button
                 type="submit"
                 className="submit-btn payment-btn"
-                disabled={loading || paymentProcessing}
+                disabled={loading || paymentProcessing || paymentVerified}
               >
-                {(loading || paymentProcessing) ? (
+                {paymentVerified ? (
+                  <>
+                    <i className="fas fa-check-circle"></i>
+                    Registration Completed!
+                  </>
+                ) : (loading || paymentProcessing) ? (
                   <>
                     <div className="spinner"></div>
                     {paymentProcessing ? 'Redirecting to Payment...' : 'Processing...'}
@@ -1125,4 +1213,5 @@ const FencerForm = ({ user, registrationData, onCompleteRegistration }) => {
     </div>
   );
 };
+
 export default FencerForm;

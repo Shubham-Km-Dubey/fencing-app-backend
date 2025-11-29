@@ -3,11 +3,11 @@ const jwt = require('jsonwebtoken');
 const User = require('../models/User');
 const router = express.Router();
 
-// Register User
+// Register User - UPDATED VERSION
 router.post('/register', async (req, res) => {
     try {
-        const { email, password, role, district } = req.body;
-        console.log('📝 Registration attempt:', { email, role, district });
+        const { email, password, role, district, name, phone, districtShortcode } = req.body;
+        console.log('📝 Registration attempt:', { email, role, district, districtShortcode });
 
         // Check if user exists
         const userExists = await User.findOne({ email });
@@ -16,13 +16,26 @@ router.post('/register', async (req, res) => {
             return res.status(400).json({ message: 'User already exists' });
         }
 
+        // Validate required fields
+        if (!email || !password || !role || !district) {
+            console.log('❌ Missing required fields:', { email, password, role, district });
+            return res.status(400).json({ 
+                message: 'Email, password, role, and district are required' 
+            });
+        }
+
         // Create user
         const user = await User.create({
             email,
             password,
             role,
             district,
-            name: req.body.name || email.split('@')[0] // Add default name
+            districtShortcode: districtShortcode || district.toUpperCase().replace(' ', '_'),
+            name: name || email.split('@')[0],
+            phone: phone || '',
+            isApproved: false,
+            districtApproved: false,
+            centralApproved: false
         });
 
         if (user) {
@@ -32,7 +45,9 @@ router.post('/register', async (req, res) => {
                 email: user.email,
                 role: user.role,
                 district: user.district,
+                districtShortcode: user.districtShortcode,
                 name: user.name,
+                phone: user.phone,
                 isApproved: user.isApproved,
                 districtApproved: user.districtApproved,
                 centralApproved: user.centralApproved

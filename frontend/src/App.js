@@ -18,20 +18,39 @@ function App() {
 
   useEffect(() => {
     const userData = localStorage.getItem('user');
+    const token = localStorage.getItem('token');
+    
     if (userData) {
       setUser(JSON.parse(userData));
     }
+    
+    // Debug: Check if token exists
+    console.log('🔐 App Mount - Token check:', token ? 'Present' : 'Missing');
+    console.log('🔐 App Mount - User check:', userData ? 'Present' : 'Missing');
   }, []);
 
   const login = (userData) => {
+    console.log('🔐 Login called with userData:', userData);
+    
     setUser(userData);
     localStorage.setItem('user', JSON.stringify(userData));
+    
+    // CRITICAL FIX: Store the token separately
+    if (userData.token) {
+      localStorage.setItem('token', userData.token);
+      console.log('✅ Token stored in localStorage');
+    } else {
+      console.error('❌ No token in userData during login');
+    }
   };
 
   const logout = () => {
+    console.log('🔐 Logout called');
     setUser(null);
     setRegistrationData(null);
+    // Remove both user and token from localStorage
     localStorage.removeItem('user');
+    localStorage.removeItem('token');
   };
 
   const startRegistration = (userType, district) => {

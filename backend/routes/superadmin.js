@@ -9,259 +9,214 @@ const School = require('../models/School');
 const Club = require('../models/Club');
 const router = express.Router();
 
-// Get dashboard statistics
-router.get('/dashboard', auth, async (req, res) => {
-    try {
-        const user = await User.findById(req.user.id);
-        
-        if (user.role !== 'super_admin') {
-            return res.status(403).json({ message: 'Access denied' });
-        }
+console.log('Superadmin routes loaded');
 
-        const totalUsers = await User.countDocuments({ role: { $ne: 'super_admin' } });
-        const pendingCentralApprovals = await User.countDocuments({ 
-            districtApproved: true, 
-            centralApproved: false,
-            isApproved: false 
-        });
-        const totalDistricts = await District.countDocuments();
-        const totalApplications = await User.countDocuments({ 
-            role: { $in: ['fencer', 'coach', 'referee', 'school', 'club'] } 
-        });
-
-        res.json({
-            totalUsers,
-            pendingCentralApprovals,
-            totalDistricts,
-            totalApplications
-        });
-    } catch (error) {
-        res.status(400).json({ message: error.message });
-    }
-});
-
-// Get all districts
-router.get('/districts', auth, async (req, res) => {
-    try {
-        const user = await User.findById(req.user.id);
-        
-        if (user.role !== 'super_admin') {
-            return res.status(403).json({ message: 'Access denied' });
-        }
-
-        const districts = await District.find().populate('createdBy', 'email name');
-        res.json(districts);
-    } catch (error) {
-        res.status(400).json({ message: error.message });
-    }
-});
-
-// Create new district + district admin with shortcode
-router.post('/districts', auth, async (req, res) => {
-    try {
-        const user = await User.findById(req.user.id);
-        
-        if (user.role !== 'super_admin') {
-            return res.status(403).json({ message: 'Access denied' });
-        }
-
-        const { name, code, adminEmail, adminName, contactNumber, address } = req.body;
-
-        // Check if district already exists
-        const existingDistrict = await District.findOne({ 
-            $or: [{ name }, { code }] 
-        });
-        if (existingDistrict) {
-            return res.status(400).json({ message: 'District with this name or code already exists' });
-        }
-
-        // Check if admin email already exists
-        const existingAdmin = await User.findOne({ email: adminEmail });
-        if (existingAdmin) {
-            return res.status(400).json({ message: 'Admin email already registered' });
-        }
-
-        // Generate random password
-        const adminPassword = generateRandomPassword();
-
-        // Create district admin user with shortcode
-        const districtAdmin = new User({
-            email: adminEmail,
-            password: adminPassword,
-            role: 'district_admin',
-            district: name,
-            districtShortcode: code.toUpperCase(),   // Saves NWD, SED, CD, etc.
-            name: adminName,
-            phone: contactNumber || '',
-            isApproved: true,
-            districtApproved: true,
-            centralApproved: true,
-            profileCompleted: true
-        });
-        await districtAdmin.save();
-
-        // Create district document
-        const district = new District({
-            name,
-            code: code.toUpperCase(),
-            adminEmail,
-            adminName,
-            contactNumber,
-            address,
-            createdBy: user._id
-        });
-        await district.save();
-
-        res.json({
-            message: 'District and admin created successfully',
-            district,
-            adminCredentials: {
-                email: adminEmail,
-                password: adminPassword,
-                shortcode: code.toUpperCase()
-            }
-        });
-    } catch (error) {
-        console.error('Create district error:', error);
-        res.status(500).json({ message: 'Server error', error: error.message });
-    }
-});
-
-// Get pending central approvals
-router.get('/pending-approvals', auth, async (req, res) => {
-    try {
-        const user = await User.findById(req.user.id);
-        
-        if (user.role !== 'super_admin') {
-            return res.status(403).json({ message: 'Access denied' });
-        }
-
-        const pendingUsers = await User.find({ 
-            districtApproved: true, 
-            centralApproved: false,
-            isApproved: false 
-        }).select('email role district registrationDate');
-
-        const pendingApplications = [];
-
-        for (const user of pendingUsers) {
-            let profile = null;
-            switch (user.role) {
-                case 'fencer':
-                    profile = await Fencer.findOne({ userId: user._id });
-                    break;
-                case 'coach':
-                    profile = await Coach.findOne({ userId: user._id });
-                    break;
-                case 'referee':
-                    profile = await Referee.findOne({ userId: user._id });
-                    break;
-                case 'school':
-                    profile = await School.findOne({ userId: user._id });
-                    break;
-                case 'club':
-                    profile = await Club.findOne({ userId: user._id });
-                    break;
-            }
-
-            if (profile) {
-                pendingApplications.push({
-                    userId: user._id,
-                    email: user.email,
-                    role: user.role,
-                    district: user.district,
-                    registrationDate: user.registrationDate,
-                    profile: profile
-                });
-            }
-        }
-
-        res.json(pendingApplications);
-    } catch (error) {
-        res.status(400).json({ message: error.message });
-    }
-});
-
-// Approve user centrally
-router.post('/approve/:userId', auth, async (req, res) => {
-    try {
-        const user = await User.findById(req.user.id);
-        
-        if (user.role !== 'super_admin') {
-            return res.status(403).json({ message: 'Access denied' });
-        }
-
-        const { userId } = req.params;
-
-        const userToApprove = await User.findById(userId);
-        if (!userToApprove) {
-            return res.status(404).json({ message: 'User not found' });
-        }
-
-        if (!userToApprove.districtApproved) {
-            return res.status(400).json({ message: 'User not approved by district' });
-        }
-
-        const dafId = generateDAFId(userToApprove.role);
-
-        userToApprove.centralApproved = true;
-        userToApprove.isApproved = true;
-        userToApprove.dafId = dafId;
-        await userToApprove.save();
-
-        res.json({ 
-            message: 'User approved successfully', 
-            dafId 
-        });
-    } catch (error) {
-        res.status(400).json({ message: error.message });
-    }
-});
-
-// Reject user centrally
-router.post('/reject/:userId', auth, async (req, res) => {
-    try {
-        const user = await User.findById(req.user.id);
-        
-        if (user.role !== 'super_admin') {
-            return res.status(403).json({ message: 'Access denied' });
-        }
-
-        const { userId } = req.params;
-        const { reason } = req.body;
-
-        const userToReject = await User.findById(userId);
-        if (!userToReject) {
-            return res.status(404).json({ message: 'User not found' });
-        }
-
-        userToReject.centralApproved = false;
-        userToReject.isApproved = false;
-        userToReject.rejectionReason = reason;
-        await userToReject.save();
-
-        res.json({ message: 'User rejected successfully' });
-    } catch (error) {
-        res.status(400).json({ message: error.message });
-    }
-});
-
-// Helper functions
+// Strong random password
 const generateRandomPassword = () => {
-    return Math.random().toString(36).slice(-8) + 'A1!';
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*';
+  let pass = '';
+  for (let i = 0; i < 12; i++) {  // ← This line was wrong before, now fixed
+    pass += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return pass;
 };
 
 const generateDAFId = (type) => {
-    const prefix = {
-        'fencer': 'DAF-F',
-        'coach': 'DAF-C',
-        'referee': 'DAF-R',
-        'school': 'DAF-S',
-        'club': 'DAF-CL'
-    }[type];
-    
-    const randomNum = Math.floor(1000 + Math.random() * 9000);
-    return `${prefix}${randomNum}${Date.now().toString().slice(-4)}`;
+  const prefix = {
+    fencer: 'DAF-F',
+    coach: 'DAF-C',
+    referee: 'DAF-R',
+    school: 'DAF-S',
+    club: 'DAF-CL'
+  }[type];
+
+  const randomNum = Math.floor(1000 + Math.random() * 9000);
+  return `${prefix}${randomNum}${Date.now().toString().slice(-4)}`;
 };
+
+// PUBLIC TEST
+router.get('/test-public', (req, res) => {
+  res.json({ message: 'Super Admin routes working!', time: new Date().toISOString() });
+});
+
+// DASHBOARD STATS
+router.get('/dashboard', auth, async (req, res) => {
+  try {
+    if (req.user.role !== 'super_admin') return res.status(403).json({ message: 'Access denied' });
+
+    const [totalUsers, pendingCentral, totalDistricts, totalApps] = await Promise.all([
+      User.countDocuments({ role: { $ne: 'super_admin' } }),
+      User.countDocuments({ districtApproved: true, centralApproved: false, isApproved: false }),
+      District.countDocuments(),
+      User.countDocuments({ role: { $in: ['fencer', 'coach', 'referee', 'school', 'club'] } })
+    ]);
+
+    res.json({
+      totalUsers,
+      pendingCentralApprovals: pendingCentral,
+      totalDistricts,
+      totalApplications: totalApps,
+      totalFencers: await Fencer.countDocuments(),
+      totalCoaches: await Coach.countDocuments(),
+      totalReferees: await Referee.countDocuments(),
+      totalSchools: await School.countDocuments(),
+      totalClubs: await Club.countDocuments(),
+      totalRevenue: 0
+    });
+  } catch (error) {
+    console.error('Dashboard error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// DISTRICTS
+router.get('/districts', auth, async (req, res) => {
+  try {
+    if (req.user.role !== 'super_admin') return res.status(403).json({ message: 'Access denied' });
+    const districts = await District.find().populate('createdBy', 'name email').sort({ createdAt: -1 });
+    res.json(districts);
+  } catch (error) {
+    console.error('Get districts error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+router.post('/districts', auth, async (req, res) => {
+  try {
+    if (req.user.role !== 'super_admin') return res.status(403).json({ message: 'Access denied' });
+
+    const { name, code, adminEmail, adminName, contactNumber = '', address = '' } = req.body;
+    if (!name || !code || !adminEmail || !adminName) {
+      return res.status(400).json({ message: 'Missing required fields' });
+    }
+
+    const exists = await District.findOne({ $or: [{ name }, { code: code.toUpperCase() }] });
+    if (exists) return res.status(400).json({ message: 'District name or code already exists' });
+
+    const adminExists = await User.findOne({ email: adminEmail });
+    if (adminExists) return res.status(400).json({ message: 'Email already registered' });
+
+    const password = generateRandomPassword();
+
+    await User.create({
+      email: adminEmail,
+      password,
+      role: 'district_admin',
+      district: name,
+      districtShortcode: code.toUpperCase(),
+      name: adminName,
+      phone: contactNumber,
+      isApproved: true,
+      districtApproved: true,
+      centralApproved: true,
+      profileCompleted: true
+    });
+
+    await District.create({
+      name,
+      code: code.toUpperCase(),
+      adminEmail,
+      adminName,
+      contactNumber,
+      address: address || `${name} District Office, Delhi`,
+      createdBy: req.user.id
+    });
+
+    res.json({
+      message: 'District & admin created',
+      adminCredentials: { email: adminEmail, password, shortcode: code.toUpperCase() }
+    });
+  } catch (error) {
+    console.error('Create district error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// DISTRICT ADMIN MANAGEMENT — FINAL WORKING
+router.get('/district-admins', auth, async (req, res) => {
+  try {
+    if (req.user.role !== 'super_admin') {
+      return res.status(403).json({ message: 'Access denied' });
+    }
+
+    const districtAdmins = await User.find({ role: 'district_admin' })
+      .select('-password -__v')
+      .sort({ createdAt: -1 })
+      .lean();
+
+    res.json(districtAdmins);
+  } catch (error) {
+    console.error('Get district admins error:', error.message);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+router.post('/district-admins/:id/reset-password', auth, async (req, res) => {
+  try {
+    if (req.user.role !== 'super_admin') return res.status(403).json({ message: 'Access denied' });
+
+    const admin = await User.findById(req.params.id);
+    if (!admin || admin.role !== 'district_admin') return res.status(404).json({ message: 'Not found' });
+
+    const newPass = generateRandomPassword();
+    admin.password = newPass;
+    await admin.save();
+
+    res.json({ message: 'Password reset', newPassword: newPass });
+  } catch (error) {
+    console.error('Reset password error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+router.put('/district-admins/:id', auth, async (req, res) => {
+  try {
+    if (req.user.role !== 'super_admin') return res.status(403).json({ message: 'Access denied' });
+
+    const { name, email, phone, district } = req.body;
+    const admin = await User.findById(req.params.id);
+    if (!admin || admin.role !== 'district_admin') return res.status(404).json({ message: 'Not found' });
+
+    if (email && email !== admin.email && await User.findOne({ email })) {
+      return res.status(400).json({ message: 'Email already in use' });
+    }
+
+    admin.name = name || admin.name;
+    admin.email = email || admin.email;
+    admin.phone = phone ?? admin.phone;
+    if (district) admin.district = district;
+
+    await admin.save();
+
+    if (district) {
+      await District.updateOne(
+        { adminEmail: admin.email },
+        { name: district, adminName: name || admin.name }
+      );
+    }
+
+    res.json({ message: 'Updated successfully' });
+  } catch (error) {
+    console.error('Update admin error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+router.delete('/district-admins/:id', auth, async (req, res) => {
+  try {
+    if (req.user.role !== 'super_admin') return res.status(403).json({ message: 'Access denied' });
+
+    const admin = await User.findById(req.params.id);
+    if (!admin || admin.role !== 'district_admin') return res.status(404).json({ message: 'Not found' });
+
+    await District.deleteOne({ adminEmail: admin.email });
+    await User.findByIdAndDelete(req.params.id);
+
+    res.json({ message: 'Deleted successfully' });
+  } catch (error) {
+    console.error('Delete admin error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
 
 module.exports = router;
