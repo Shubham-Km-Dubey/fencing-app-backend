@@ -7,8 +7,12 @@ const API_BASE_URL = process.env.NODE_ENV === 'development'
 let cashfree;
 export const initializeCashfree = async () => {
   try {
+    // FIXED: Use sandbox for localhost, production for live domains
+    const mode = window.location.hostname === 'localhost' ? 'sandbox' : 'production';
+    console.log('🔐 Cashfree mode:', mode);
+    
     cashfree = await load({
-      mode: 'production' // Changed from sandbox to production
+      mode: mode
     });
     return cashfree;
   } catch (error) {

@@ -6,6 +6,7 @@ const Coach = require("../models/Coach");
 const Referee = require("../models/Referee");
 const School = require("../models/School");
 const Club = require("../models/Club");
+const District = require("../models/District");
 
 const router = express.Router();
 
@@ -21,11 +22,11 @@ const FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:3000";
 const BACKEND_URL = process.env.BACKEND_URL || "http://localhost:5000";
 
 // MOCK mode is ONLY active if keys are missing
-const USE_MOCK =
-  !CASHFREE_APP_ID ||
-  CASHFREE_APP_ID === "TEST_APP_ID" ||
-  !CASHFREE_SECRET_KEY;
-
+// const USE_MOCK =
+//   !CASHFREE_APP_ID ||
+//   CASHFREE_APP_ID === "TEST_APP_ID" ||
+//   !CASHFREE_SECRET_KEY;
+const USE_MOCK = true; // Force mock mode for testing
 console.log("🔐 Cashfree Config Loaded:", {
   baseURL: CASHFREE_BASE_URL,
   appIdPresent: !!CASHFREE_APP_ID,
@@ -78,7 +79,7 @@ router.post("/create-session", async (req, res) => {
       await payment.save();
 
       // For mock mode, simulate successful payment immediately
-      payment.paymentStatus = "completed";
+      payment.paymentStatus = "SUCCESS";
       payment.cashfreeOrderStatus = "PAID";
       payment.paymentTime = new Date();
       payment.transactionId = `mock_txn_${Date.now()}`;
@@ -265,21 +266,50 @@ router.get("/verify/:orderId", async (req, res) => {
 });
 
 // ==============================
-// COMPLETE REGISTRATION
+// COMPLETE REGISTRATION - UPDATED VERSION
 // ==============================
 async function completeRegistration(payment) {
   try {
     const { userType, registrationData, customerDetails } = payment;
 
-    const user = await User.findOne({ email: customerDetails.customerEmail });
+    console.log(`🎉 Completing registration for ${userType}:`, customerDetails.customerEmail);
 
-    if (user) {
+    // Check if user already exists
+    let user = await User.findOne({ email: customerDetails.customerEmail });
+
+    if (!user) {
+      console.log('👤 Creating new user account...');
+      
+      // Get district shortcode if not provided
+      let districtShortcode = registrationData.districtShortcode;
+      if (!districtShortcode && registrationData.selectedDistrict) {
+        const district = await District.findOne({ name: registrationData.selectedDistrict });
+        districtShortcode = district?.code || registrationData.selectedDistrict.toUpperCase().replace(/\s+/g, '_');
+      }
+
+      // Create user account if it doesn't exist
+      user = new User({
+        email: customerDetails.customerEmail,
+        password: registrationData.password,
+        role: userType,
+        district: registrationData.selectedDistrict,
+        districtShortcode: districtShortcode,
+        name: customerDetails.customerName,
+        phone: customerDetails.customerPhone,
+        isApproved: false,
+        districtApproved: false,
+        centralApproved: false,
+        profileCompleted: true
+      });
+      await user.save();
+      console.log('✅ User account created:', user.email);
+    } else {
+      console.log('👤 User account already exists:', user.email);
       user.profileCompleted = true;
-      user.isApproved = false;
-      user.districtApproved = false;
       await user.save();
     }
 
+    // Create specific user type record
     const modelMap = {
       fencer: Fencer,
       coach: Coach,
@@ -291,17 +321,148 @@ async function completeRegistration(payment) {
     const Model = modelMap[userType];
 
     if (Model) {
-      await new Model({
-        ...registrationData,
-        userId: user?._id,
-        paymentStatus: "completed",
-        paymentOrderId: payment.orderId,
-      }).save();
+      // Check if record already exists for this user
+      const existingRecord = await Model.findOne({ userId: user._id });
+      
+      if (existingRecord) {
+        console.log(`ℹ️ ${userType} record already exists for user:`, user.email);
+        return;
+      }
+
+      // Prepare data for specific model
+      let modelData = {
+        userId: user._id,
+        status: 'pending',
+        paymentStatus: 'SUCCESS',
+        paymentOrderId: payment.orderId
+      };
+
+      // Add specific fields based on user type
+      switch (userType) {
+        case 'fencer':
+          modelData = {
+            ...modelData,
+            firstName: registrationData.firstName,
+            middleName: registrationData.middleName,
+            lastName: registrationData.lastName,
+            aadharNumber: registrationData.aadharNumber,
+            fathersName: registrationData.fathersName,
+            mothersName: registrationData.mothersName,
+            mobileNumber: registrationData.mobileNumber,
+            dateOfBirth: registrationData.dateOfBirth,
+            permanentAddress: registrationData.permanentAddress,
+            presentAddress: registrationData.presentAddress,
+            highestAchievement: registrationData.highestAchievement,
+            coachName: registrationData.coachName,
+            trainingCenter: registrationData.trainingCenter,
+            selectedDistrict: registrationData.selectedDistrict,
+            districtShortcode: user.districtShortcode,
+            documents: registrationData.documents
+          };
+          break;
+
+        case 'coach':
+          modelData = {
+            ...modelData,
+            firstName: registrationData.firstName,
+            middleName: registrationData.middleName,
+            lastName: registrationData.lastName,
+            dateOfBirth: registrationData.dateOfBirth,
+            mobileNumber: registrationData.mobileNumber,
+            aadharNumber: registrationData.aadharNumber,
+            email: registrationData.email,
+            fathersName: registrationData.fathersName,
+            mothersName: registrationData.mothersName,
+            permanentAddress: registrationData.permanentAddress,
+            presentAddress: registrationData.presentAddress,
+            level: registrationData.level,
+            highestAchievement: registrationData.highestAchievement,
+            trainingCenter: registrationData.trainingCenter,
+            selectedDistrict: registrationData.selectedDistrict,
+            documents: registrationData.documents
+          };
+          break;
+
+        case 'referee':
+          modelData = {
+            ...modelData,
+            firstName: registrationData.firstName,
+            middleName: registrationData.middleName,
+            lastName: registrationData.lastName,
+            dateOfBirth: registrationData.dateOfBirth,
+            mobileNumber: registrationData.mobileNumber,
+            aadharNumber: registrationData.aadharNumber,
+            email: registrationData.email,
+            fathersName: registrationData.fathersName,
+            mothersName: registrationData.mothersName,
+            permanentAddress: registrationData.permanentAddress,
+            presentAddress: registrationData.presentAddress,
+            level: registrationData.level,
+            highestAchievement: registrationData.highestAchievement,
+            trainingCenter: registrationData.trainingCenter,
+            selectedDistrict: registrationData.selectedDistrict,
+            documents: registrationData.documents
+          };
+          break;
+
+        case 'school':
+          modelData = {
+            ...modelData,
+            schoolName: registrationData.schoolName,
+            registrationNumber: registrationData.registrationNumber,
+            schoolEmail: registrationData.schoolEmail,
+            schoolContactNumber: registrationData.schoolContactNumber,
+            representativeName: registrationData.representativeName,
+            representativeNumber: registrationData.representativeNumber,
+            representativeEmail: registrationData.representativeEmail,
+            indoorHallMeasurement: registrationData.indoorHallMeasurement,
+            acNonAc: registrationData.acType,
+            auditorium: registrationData.hasAuditorium === 'Yes',
+            assembleArea: registrationData.hasAssembleArea === 'Yes',
+            parkingArea: registrationData.hasParkingArea === 'Yes',
+            permanentAddress: registrationData.permanentAddress,
+            numberOfStudents: registrationData.numberOfStudents,
+            coachName: registrationData.coachName,
+            selectedDistrict: registrationData.selectedDistrict,
+            documents: registrationData.documents
+          };
+          break;
+
+        case 'club':
+          modelData = {
+            ...modelData,
+            clubName: registrationData.clubName,
+            clubEmail: registrationData.clubEmail,
+            clubContactNumber: registrationData.clubContactNumber,
+            representativeName: registrationData.representativeName,
+            representativeNumber: registrationData.representativeNumber,
+            representativeEmail: registrationData.representativeEmail,
+            indoorHallMeasurement: registrationData.indoorHallMeasurement,
+            acNonAc: registrationData.acType,
+            auditorium: registrationData.hasAuditorium === 'Yes',
+            assembleArea: registrationData.hasAssembleArea === 'Yes',
+            parkingArea: registrationData.hasParkingArea === 'Yes',
+            permanentAddress: registrationData.permanentAddress,
+            numberOfStudents: registrationData.numberOfStudents,
+            numberOfCoaches: registrationData.numberOfCoaches,
+            coachesList: registrationData.coaches || [],
+            selectedDistrict: registrationData.selectedDistrict
+          };
+          break;
+      }
+
+      // Save the specific model record
+      const record = new Model(modelData);
+      await record.save();
+      
+      console.log(`✅ ${userType} record created successfully for:`, user.email);
+      console.log(`📋 Record ID:`, record._id);
+      console.log(`📍 District:`, registrationData.selectedDistrict);
     }
 
-    console.log(`🎉 Registration saved for ${userType}:`, user.email);
   } catch (error) {
     console.error("❌ Registration Completion Error:", error);
+    throw error;
   }
 }
 
@@ -318,7 +479,7 @@ router.post("/webhook", express.json(), async (req, res) => {
     if (event === "ORDER.PAYMENT_SUCCESS") {
       const payment = await Payment.findOne({ orderId });
       if (payment && payment.paymentStatus !== "completed") {
-        payment.paymentStatus = "completed";
+        payment.paymentStatus = "SUCCESS";
         payment.cashfreeOrderStatus = "PAID";
         payment.paymentTime = new Date();
         payment.transactionId = req.body.data.payment.transaction_id;

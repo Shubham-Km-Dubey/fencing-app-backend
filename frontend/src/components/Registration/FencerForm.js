@@ -62,16 +62,61 @@ const FencerForm = ({ user, registrationData, onCompleteRegistration }) => {
   const [paymentVerified, setPaymentVerified] = useState(false);
   const [orderId, setOrderId] = useState(null);
 
-  // Fetch districts from NEW public API
+  // FIXED: Fetch districts from correct API endpoint
   useEffect(() => {
     const fetchDistricts = async () => {
       setLoadingDistricts(true);
       try {
-        const response = await axios.get(`${API_BASE_URL}/api/districts/public`);
-        setDistricts(response.data || []);
+        console.log('🌐 Fetching districts from API...');
+        
+        // Use the correct endpoint that returns active districts
+        const response = await axios.get(`${API_BASE_URL}/api/districts`);
+        console.log('📥 Districts API response:', response.data);
+
+        // Handle the response based on your API structure
+        if (response.data && Array.isArray(response.data)) {
+          // If response is directly an array
+          const activeDistricts = response.data.filter(district => 
+            district.isActive !== false // Include all districts where isActive is not false
+          );
+          setDistricts(activeDistricts);
+          console.log('✅ Active districts loaded:', activeDistricts);
+        } else if (response.data && response.data.data && Array.isArray(response.data.data)) {
+          // If response has { data: [] } structure
+          const activeDistricts = response.data.data.filter(district => 
+            district.isActive !== false
+          );
+          setDistricts(activeDistricts);
+          console.log('✅ Active districts loaded:', activeDistricts);
+        } else if (response.data && response.data.success && Array.isArray(response.data.data)) {
+          // If response has { success: true, data: [] } structure
+          const activeDistricts = response.data.data.filter(district => 
+            district.isActive !== false
+          );
+          setDistricts(activeDistricts);
+          console.log('✅ Active districts loaded:', activeDistricts);
+        } else {
+          console.warn('Unexpected districts response structure:', response.data);
+          setDistricts([]);
+        }
+        
       } catch (error) {
-        console.error('Failed to fetch districts:', error);
-        setMessage('Failed to load districts. Please refresh the page.');
+        console.error('❌ Failed to fetch districts:', error);
+        console.error('Error details:', error.response?.data);
+        
+        // Try alternative endpoints if the main one fails
+        try {
+          console.log('🔄 Trying alternative endpoint...');
+          const altResponse = await axios.get(`${API_BASE_URL}/api/register/districts`);
+          if (altResponse.data && altResponse.data.success && Array.isArray(altResponse.data.data)) {
+            setDistricts(altResponse.data.data);
+            console.log('✅ Districts loaded from alternative endpoint');
+          }
+        } catch (altError) {
+          console.error('❌ Alternative endpoint also failed:', altError);
+          setDistricts([]);
+          setMessage('Unable to load districts list. Please contact administrator.');
+        }
       } finally {
         setLoadingDistricts(false);
       }
@@ -86,10 +131,11 @@ const FencerForm = ({ user, registrationData, onCompleteRegistration }) => {
         const response = await axios.get(`${API_BASE_URL}/api/fees/fencer`);
         if (response.data.success) {
           setRegistrationFee(response.data.data.amount);
+          console.log('✅ Registration fee loaded:', response.data.data.amount);
         }
       } catch (error) {
         console.error('Failed to fetch registration fee:', error);
-        setRegistrationFee(500);
+        setRegistrationFee(500); // Fallback amount
       } finally {
         setFeeLoading(false);
       }
@@ -97,41 +143,52 @@ const FencerForm = ({ user, registrationData, onCompleteRegistration }) => {
     fetchRegistrationFee();
   }, []);
 
-  // Check for pending payments on component mount
+  // FIXED: Check for pending payments ONLY when returning from payment gateway
   useEffect(() => {
-    const checkPendingPayment = async () => {
-      const pendingOrderId = localStorage.getItem('pendingPaymentOrderId');
-      const pendingUserType = localStorage.getItem('pendingPaymentUserType');
-      
-      if (pendingOrderId && pendingUserType === 'fencer') {
-        setMessage('Checking pending payment status...');
+    const urlParams = new URLSearchParams(window.location.search);
+    const orderId = urlParams.get('order_id');
+    const userType = urlParams.get('user_type');
+    
+    if (orderId && userType === 'fencer') {
+      const checkPendingPayment = async () => {
+        setMessage('Verifying your payment and completing registration...');
         setLoading(true);
         
         try {
-          const paymentResult = await checkPaymentStatus(pendingOrderId);
+          const paymentResult = await checkPaymentStatus(orderId);
           
           if (paymentResult.success) {
-            setMessage('Payment verified! Registration completed.');
+            // Get stored registration data and complete registration
+            const storedData = localStorage.getItem('pendingRegistrationData');
+            if (storedData) {
+              const registrationData = JSON.parse(storedData);
+              await completeFencerRegistration(registrationData);
+            }
+            
+            setMessage('Payment verified! Registration completed successfully.');
             setPaymentVerified(true);
             localStorage.removeItem('pendingPaymentOrderId');
             localStorage.removeItem('pendingPaymentUserType');
+            localStorage.removeItem('pendingRegistrationData');
             setTimeout(() => {
               onCompleteRegistration();
             }, 2000);
           } else {
-            setMessage(`Payment check failed: ${paymentResult.error}`);
+            setMessage(`Payment verification failed: ${paymentResult.error}`);
             localStorage.removeItem('pendingPaymentOrderId');
             localStorage.removeItem('pendingPaymentUserType');
+            localStorage.removeItem('pendingRegistrationData');
           }
         } catch (error) {
-          console.error('Pending payment check error:', error);
-          setMessage('Failed to check payment status');
+          console.error('Payment verification error:', error);
+          setMessage('Failed to verify payment. Please contact support.');
         } finally {
           setLoading(false);
         }
-      }
-    };
-    checkPendingPayment();
+      };
+      
+      checkPendingPayment();
+    }
   }, [onCompleteRegistration]);
 
   // Pre-fill email and district if available from registration
@@ -346,6 +403,21 @@ const FencerForm = ({ user, registrationData, onCompleteRegistration }) => {
     return { success: false, error: 'Payment verification timeout' };
   };
 
+  // Function to complete fencer registration after payment
+  const completeFencerRegistration = async (registrationData) => {
+    try {
+      console.log('💾 Completing fencer registration:', registrationData);
+      
+      const response = await axios.post(`${API_BASE_URL}/api/fencer/register`, registrationData);
+      console.log('✅ Fencer registration completed successfully:', response.data);
+      
+      return response.data;
+    } catch (error) {
+      console.error('❌ Error completing fencer registration:', error);
+      throw new Error('Failed to complete registration: ' + (error.response?.data?.error || error.message));
+    }
+  };
+
   const initiatePayment = async () => {
     try {
       setPaymentProcessing(true);
@@ -359,38 +431,28 @@ const FencerForm = ({ user, registrationData, onCompleteRegistration }) => {
         selectedDistrictObj?.code ||
         formData.selectedDistrict.toUpperCase().replace(/\s+/g, '_');
 
-      // First register the user if not already registered
-      if (!user) {
-        setMessage('Creating user account...');
-        const userRegistrationData = {
-          name: `${formData.firstName} ${formData.lastName}`.trim(),
-          email: formData.email,
-          password: formData.password,
-          role: 'fencer',
-          district: formData.selectedDistrict,
-          districtShortcode,
-          phone: formData.mobileNumber || '9999999999'
-        };
+      // Prepare the complete registration data
+      const registrationData = {
+        email: formData.email,
+        password: formData.password,
+        firstName: formData.firstName,
+        middleName: formData.middleName,
+        lastName: formData.lastName,
+        aadharNumber: formData.aadharNumber,
+        fathersName: formData.fathersName,
+        mothersName: formData.mothersName,
+        mobileNumber: formData.mobileNumber,
+        dateOfBirth: formData.dateOfBirth,
+        permanentAddress: formData.permanentAddress,
+        presentAddress: formData.presentAddress,
+        highestAchievement: formData.highestAchievement,
+        coachName: formData.coachName,
+        trainingCenter: formData.trainingCenter,
+        selectedDistrict: formData.selectedDistrict,
+        documents: formData.documents
+      };
 
-        console.log('👤 Registering user:', userRegistrationData);
-
-        try {
-          const registerResponse = await axios.post(
-            `${API_BASE_URL}/api/register/register`,
-            userRegistrationData
-          );
-          console.log('✅ User registration successful:', registerResponse.data);
-          setMessage('User account created. Proceeding to payment...');
-        } catch (error) {
-          console.error('❌ User registration error:', error.response?.data || error.message);
-          if (error.response?.status === 400 && error.response?.data?.error?.includes('already exists')) {
-            console.log('ℹ️ User already exists, continuing with payment...');
-            setMessage('User account exists. Proceeding to payment...');
-          } else {
-            throw new Error('User registration failed: ' + (error.response?.data?.error || error.message));
-          }
-        }
-      }
+      console.log('📝 Registration data prepared:', registrationData);
 
       const orderData = {
         orderAmount: registrationFee,
@@ -398,16 +460,10 @@ const FencerForm = ({ user, registrationData, onCompleteRegistration }) => {
         customerEmail: formData.email,
         customerPhone: formData.mobileNumber || '9999999999',
         userType: 'fencer',
-        registrationData: {
-          ...formData,
-          districtShortcode,
-          userId: user?._id,
-          paymentAmount: registrationFee,
-          paymentStatus: 'PENDING'
-        }
+        registrationData: registrationData
       };
 
-      console.log('💰 Payment order data:', orderData);
+      console.log('💰 Payment order data for amount:', registrationFee, orderData);
 
       const paymentSession = await createPaymentSession(orderData);
       
@@ -416,6 +472,7 @@ const FencerForm = ({ user, registrationData, onCompleteRegistration }) => {
         
         localStorage.setItem('pendingPaymentOrderId', paymentSession.data.order_id);
         localStorage.setItem('pendingPaymentUserType', 'fencer');
+        localStorage.setItem('pendingRegistrationData', JSON.stringify(registrationData));
         
         // Initialize Cashfree SDK
         console.log('🔄 Initializing Cashfree SDK...');
@@ -427,16 +484,20 @@ const FencerForm = ({ user, registrationData, onCompleteRegistration }) => {
           returnUrl: `${window.location.origin}/payment-success?order_id=${paymentSession.data.order_id}&user_type=fencer`,
           onSuccess: async (data) => {
             console.log('✅ Payment successful:', data);
-            setMessage('Payment successful! Verifying payment...');
+            setMessage('Payment successful! Completing registration...');
             
             // Verify payment with backend
             try {
               const verification = await verifyPayment(paymentSession.data.order_id);
               if (verification.success && verification.data.payment_status === 'SUCCESS') {
-                setMessage('Payment verified! Registration completed.');
+                // Complete registration after successful payment
+                await completeFencerRegistration(registrationData);
+                
+                setMessage('Registration completed successfully! Awaiting district approval.');
                 setPaymentVerified(true);
                 localStorage.removeItem('pendingPaymentOrderId');
                 localStorage.removeItem('pendingPaymentUserType');
+                localStorage.removeItem('pendingRegistrationData');
                 
                 setTimeout(() => {
                   onCompleteRegistration();
@@ -460,6 +521,7 @@ const FencerForm = ({ user, registrationData, onCompleteRegistration }) => {
             setLoading(false);
             localStorage.removeItem('pendingPaymentOrderId');
             localStorage.removeItem('pendingPaymentUserType');
+            localStorage.removeItem('pendingRegistrationData');
           },
           onRedirect: (data) => {
             console.log('🔄 Payment redirecting:', data);
@@ -480,6 +542,7 @@ const FencerForm = ({ user, registrationData, onCompleteRegistration }) => {
       setLoading(false);
       localStorage.removeItem('pendingPaymentOrderId');
       localStorage.removeItem('pendingPaymentUserType');
+      localStorage.removeItem('pendingRegistrationData');
     }
   };
 
@@ -512,7 +575,7 @@ const FencerForm = ({ user, registrationData, onCompleteRegistration }) => {
         return;
       }
 
-      console.log('🚀 Starting payment process...');
+      console.log('🚀 Starting payment process for amount:', registrationFee);
       await initiatePayment();
       
     } catch (error) {

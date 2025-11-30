@@ -13,5 +13,5 @@ export const CASHFREE_CONFIG = {
   }
 };
 
-// Registration fee amount (in INR)
-export const REGISTRATION_FEE = 500; // ₹500
+// Registration fee is now dynamic and fetched from backend API
+// The fee amount will be retrieved from /api/fees/[userType] endpoint

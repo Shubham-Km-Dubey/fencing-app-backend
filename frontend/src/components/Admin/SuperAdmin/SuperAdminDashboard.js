@@ -193,7 +193,7 @@ const SuperAdminDashboard = ({ user, onLogout }) => {
 
   // Reset District Admin Password
   const handleResetPassword = async (adminId, adminEmail) => {
-    if (!confirm(`Are you sure you want to reset password for ${adminEmail}?`)) {
+    if (!window.confirm(`Are you sure you want to reset password for ${adminEmail}?`)) {
       return;
     }
 
@@ -259,7 +259,7 @@ const SuperAdminDashboard = ({ user, onLogout }) => {
 
   // Delete District Admin
   const handleDeleteAdmin = async (adminId, adminEmail) => {
-    if (!confirm(`Are you sure you want to delete ${adminEmail}? This will also delete the associated district.`)) {
+    if (!window.confirm(`Are you sure you want to delete ${adminEmail}? This will also delete the associated district.`)) {
       return;
     }
 

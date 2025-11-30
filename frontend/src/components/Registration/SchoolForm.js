@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
+import { initializeCashfree, createPaymentSession, verifyPayment } from '../../services/paymentService';
 import '../../styles/SchoolForm.css';
 
 // API configuration
@@ -54,18 +55,31 @@ const SchoolForm = ({ user, registrationData, onCompleteRegistration }) => {
   const [message, setMessage] = useState('');
   const [uploadProgress, setUploadProgress] = useState({});
 
-  // Fetch districts from API
+  // FIXED: Fetch districts from correct API endpoint
   useEffect(() => {
     const fetchDistricts = async () => {
       setLoadingDistricts(true);
       try {
-        const response = await axios.get(`${API_BASE_URL}/api/register/districts`);
-        if (response.data.success) {
-          setDistricts(response.data.data);
+        console.log('🌐 Fetching districts from API...');
+        
+        // Use the CORRECT endpoint: /api/districts/public
+        const response = await axios.get(`${API_BASE_URL}/api/districts/public`);
+        console.log('📥 Districts API response:', response.data);
+
+        // The response should be a direct array of districts
+        if (response.data && Array.isArray(response.data)) {
+          setDistricts(response.data);
+          console.log('✅ Districts loaded successfully:', response.data.length, 'districts found');
+        } else {
+          console.warn('Unexpected districts response structure:', response.data);
+          setDistricts([]);
         }
+        
       } catch (error) {
-        console.error('Failed to fetch districts:', error);
-        setMessage('Failed to load districts. Please refresh the page.');
+        console.error('❌ Failed to fetch districts:', error);
+        console.error('Error details:', error.response?.data);
+        setDistricts([]);
+        setMessage('Unable to load districts list. Please contact administrator.');
       } finally {
         setLoadingDistricts(false);
       }
@@ -80,6 +94,7 @@ const SchoolForm = ({ user, registrationData, onCompleteRegistration }) => {
         const response = await axios.get(`${API_BASE_URL}/api/fees/school`);
         if (response.data.success) {
           setRegistrationFee(response.data.data.amount);
+          console.log('✅ Registration fee loaded:', response.data.data.amount);
         }
       } catch (error) {
         console.error('Failed to fetch registration fee:', error);
@@ -91,18 +106,19 @@ const SchoolForm = ({ user, registrationData, onCompleteRegistration }) => {
     fetchRegistrationFee();
   }, []);
 
-  // Check for pending payments on component mount
+  // FIXED: Check for pending payments ONLY when returning from payment gateway
   useEffect(() => {
-    const checkPendingPayment = async () => {
-      const pendingOrderId = localStorage.getItem('pendingPaymentOrderId');
-      const pendingUserType = localStorage.getItem('pendingPaymentUserType');
-      
-      if (pendingOrderId && pendingUserType === 'school') {
-        setMessage('Checking pending payment status...');
+    const urlParams = new URLSearchParams(window.location.search);
+    const orderId = urlParams.get('order_id');
+    const userType = urlParams.get('user_type');
+    
+    if (orderId && userType === 'school') {
+      const checkPendingPayment = async () => {
+        setMessage('Verifying your payment...');
         setLoading(true);
         
         try {
-          const paymentResult = await checkPaymentStatus(pendingOrderId);
+          const paymentResult = await checkPaymentStatus(orderId);
           
           if (paymentResult.success) {
             setMessage('Payment verified! Registration completed.');
@@ -113,19 +129,20 @@ const SchoolForm = ({ user, registrationData, onCompleteRegistration }) => {
               onCompleteRegistration();
             }, 2000);
           } else {
-            setMessage(`Payment check failed: ${paymentResult.error}`);
+            setMessage(`Payment verification failed: ${paymentResult.error}`);
             localStorage.removeItem('pendingPaymentOrderId');
             localStorage.removeItem('pendingPaymentUserType');
           }
         } catch (error) {
-          console.error('Pending payment check error:', error);
-          setMessage('Failed to check payment status');
+          console.error('Payment verification error:', error);
+          setMessage('Failed to verify payment. Please contact support.');
         } finally {
           setLoading(false);
         }
-      }
-    };
-    checkPendingPayment();
+      };
+      
+      checkPendingPayment();
+    }
   }, [onCompleteRegistration]);
 
   // Pre-fill email and district if available from registration
@@ -272,42 +289,25 @@ const SchoolForm = ({ user, registrationData, onCompleteRegistration }) => {
     }
   };
 
-  // PAYMENT FUNCTIONS - FIXED VERSION
-  const createPaymentSession = async (orderData) => {
-    try {
-      const response = await axios.post(`${API_BASE_URL}/api/payments/create-session`, orderData);
-      return response.data;
-    } catch (error) {
-      console.error('Payment session error:', error);
-      throw new Error(error.response?.data?.error || 'Failed to create payment session');
-    }
-  };
-
-  const verifyPayment = async (orderId) => {
-    try {
-      const response = await axios.get(`${API_BASE_URL}/api/payments/verify/${orderId}`);
-      return response.data;
-    } catch (error) {
-      console.error('Payment verification error:', error);
-      throw new Error(error.response?.data?.error || 'Failed to verify payment');
-    }
-  };
-
+  // PAYMENT FUNCTIONS - UPDATED FOR CASHFREE SDK
   const checkPaymentStatus = async (orderId, maxAttempts = 30) => {
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       try {
+        console.log(`🔄 Payment check attempt ${attempt}/${maxAttempts}`);
         const result = await verifyPayment(orderId);
-        console.log(`Payment check attempt ${attempt}:`, result);
         
         if (result.data?.payment_status === 'SUCCESS' || result.data?.order_status === 'PAID') {
+          console.log('✅ Payment successful!');
           return { success: true, data: result.data };
         } else if (result.data?.payment_status === 'FAILED') {
+          console.log('❌ Payment failed');
           return { success: false, error: 'Payment failed' };
         }
         
+        console.log('⏳ Payment still processing, waiting...');
         await new Promise(resolve => setTimeout(resolve, 2000));
       } catch (error) {
-        console.error(`Payment check attempt ${attempt} failed:`, error);
+        console.error(`❌ Payment check attempt ${attempt} failed:`, error);
       }
     }
     
@@ -318,26 +318,44 @@ const SchoolForm = ({ user, registrationData, onCompleteRegistration }) => {
     try {
       setPaymentProcessing(true);
       setMessage('Creating payment session...');
-      
+
+      // Find selected district object to get SHORT CODE from DB
+      const selectedDistrictObj = districts.find(
+        d => d.name === formData.selectedDistrict
+      );
+      const districtShortcode =
+        selectedDistrictObj?.code ||
+        formData.selectedDistrict.toUpperCase().replace(/\s+/g, '_');
+
       // First register the user if not already registered
       if (!user) {
         setMessage('Creating user account...');
         const userRegistrationData = {
+          name: formData.schoolName,
           email: formData.email,
           password: formData.password,
           role: 'school',
           district: formData.selectedDistrict,
-          name: formData.schoolName,
-          phone: formData.schoolContactNumber
+          districtShortcode,
+          phone: formData.schoolContactNumber || '9999999999'
         };
 
+        console.log('👤 Registering user:', userRegistrationData);
+
         try {
-          await axios.post(`${API_BASE_URL}/api/auth/register`, userRegistrationData);
+          const registerResponse = await axios.post(
+            `${API_BASE_URL}/api/register/register`,
+            userRegistrationData
+          );
+          console.log('✅ User registration successful:', registerResponse.data);
           setMessage('User account created. Proceeding to payment...');
         } catch (error) {
-          // If user already exists, continue with payment
-          if (error.response?.status !== 400) {
-            throw error;
+          console.error('❌ User registration error:', error.response?.data || error.message);
+          if (error.response?.status === 400 && error.response?.data?.error?.includes('already exists')) {
+            console.log('ℹ️ User already exists, continuing with payment...');
+            setMessage('User account exists. Proceeding to payment...');
+          } else {
+            throw new Error('User registration failed: ' + (error.response?.data?.error || error.message));
           }
         }
       }
@@ -350,11 +368,14 @@ const SchoolForm = ({ user, registrationData, onCompleteRegistration }) => {
         userType: 'school',
         registrationData: {
           ...formData,
+          districtShortcode,
           userId: user?._id,
           paymentAmount: registrationFee,
           paymentStatus: 'PENDING'
         }
       };
+
+      console.log('💰 Payment order data for amount:', registrationFee, orderData);
 
       const paymentSession = await createPaymentSession(orderData);
       
@@ -364,42 +385,69 @@ const SchoolForm = ({ user, registrationData, onCompleteRegistration }) => {
         localStorage.setItem('pendingPaymentOrderId', paymentSession.data.order_id);
         localStorage.setItem('pendingPaymentUserType', 'school');
         
-        if (paymentSession.data.payment_url) {
-          // For mock payments
-          if (paymentSession.data.payment_url.includes('/mock-payment')) {
-            setMessage('Processing test payment...');
-            await new Promise(resolve => setTimeout(resolve, 3000));
+        // Initialize Cashfree SDK
+        console.log('🔄 Initializing Cashfree SDK...');
+        const cashfree = await initializeCashfree();
+        
+        // Create checkout options for Cashfree
+        const checkoutOptions = {
+          paymentSessionId: paymentSession.data.payment_session_id,
+          returnUrl: `${window.location.origin}/payment-success?order_id=${paymentSession.data.order_id}&user_type=school`,
+          onSuccess: async (data) => {
+            console.log('✅ Payment successful:', data);
+            setMessage('Payment successful! Verifying payment...');
             
-            const paymentResult = await checkPaymentStatus(paymentSession.data.order_id);
-            
-            if (paymentResult.success) {
-              setMessage('Payment successful! Registration completed.');
-              setPaymentVerified(true);
-              setTimeout(() => {
-                onCompleteRegistration();
+            // Verify payment with backend
+            try {
+              const verification = await verifyPayment(paymentSession.data.order_id);
+              if (verification.success && verification.data.payment_status === 'SUCCESS') {
+                setMessage('Payment verified! Registration completed.');
+                setPaymentVerified(true);
                 localStorage.removeItem('pendingPaymentOrderId');
                 localStorage.removeItem('pendingPaymentUserType');
-              }, 2000);
-            } else {
-              setMessage(`Payment failed: ${paymentResult.error}`);
+                
+                setTimeout(() => {
+                  onCompleteRegistration();
+                }, 2000);
+              } else {
+                setMessage('Payment verification failed. Please contact support.');
+                setPaymentProcessing(false);
+                setLoading(false);
+              }
+            } catch (error) {
+              console.error('Payment verification error:', error);
+              setMessage('Payment verification failed. Please contact support.');
               setPaymentProcessing(false);
               setLoading(false);
             }
-          } else {
-            // Real Cashfree payment - redirect
-            window.location.href = paymentSession.data.payment_url;
+          },
+          onFailure: (data) => {
+            console.error('❌ Payment failed:', data);
+            setMessage(`Payment failed: ${data.error?.message || 'Unknown error'}`);
+            setPaymentProcessing(false);
+            setLoading(false);
+            localStorage.removeItem('pendingPaymentOrderId');
+            localStorage.removeItem('pendingPaymentUserType');
+          },
+          onRedirect: (data) => {
+            console.log('🔄 Payment redirecting:', data);
           }
-        } else {
-          throw new Error('Payment URL not received');
-        }
+        };
+
+        console.log('🎯 Opening Cashfree checkout...');
+        // Open Cashfree checkout
+        cashfree.checkout(checkoutOptions);
+        
       } else {
         throw new Error(paymentSession.error || 'Payment initiation failed');
       }
     } catch (error) {
-      console.error('Payment initiation error:', error);
+      console.error('❌ Payment initiation error:', error);
       setMessage(`Payment failed: ${error.message}`);
       setPaymentProcessing(false);
       setLoading(false);
+      localStorage.removeItem('pendingPaymentOrderId');
+      localStorage.removeItem('pendingPaymentUserType');
     }
   };
 
@@ -433,6 +481,7 @@ const SchoolForm = ({ user, registrationData, onCompleteRegistration }) => {
         return;
       }
 
+      console.log('🚀 Starting payment process for amount:', registrationFee);
       await initiatePayment();
       
     } catch (error) {
@@ -805,8 +854,8 @@ const SchoolForm = ({ user, registrationData, onCompleteRegistration }) => {
                   >
                     <option value="">{loadingDistricts ? 'Loading districts...' : 'Choose your district association'}</option>
                     {districts.map(district => (
-                      <option key={district._id} value={district.name}>
-                        {district.name} {district.adminName && `- Admin: ${district.adminName}`}
+                      <option key={district._id || district.code} value={district.name}>
+                        {district.name} {district.code ? `(${district.code})` : ''}
                       </option>
                     ))}
                   </select>
@@ -1062,7 +1111,7 @@ const SchoolForm = ({ user, registrationData, onCompleteRegistration }) => {
                 Payment Information
               </h2>
               <div className="payment-notice">
-                <h3>Registration Fee: ₹{registrationFee}</h3>
+                <h3>Registration Fee: {feeLoading ? 'Loading...' : `₹${registrationFee}`}</h3>
                 <p>Complete your school registration by making the payment. You will be redirected to secure payment gateway.</p>
                 
                 {process.env.NODE_ENV !== 'production' && (
@@ -1102,7 +1151,7 @@ const SchoolForm = ({ user, registrationData, onCompleteRegistration }) => {
                 ) : (loading || paymentProcessing) ? (
                   <>
                     <div className="spinner"></div>
-                    {paymentProcessing ? 'Redirecting to Payment...' : 'Processing...'}
+                    {paymentProcessing ? 'Processing Payment...' : 'Processing...'}
                   </>
                 ) : (
                   <>

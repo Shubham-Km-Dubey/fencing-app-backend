@@ -24,8 +24,7 @@ router.post('/register', async (req, res) => {
       coachName,
       trainingCenter,
       selectedDistrict,
-      documents,
-      userId
+      documents
     } = req.body;
 
     console.log('Fencer registration request:', {
@@ -58,6 +57,15 @@ router.post('/register', async (req, res) => {
       return res.status(400).json({
         success: false,
         error: 'User with this email already exists'
+      });
+    }
+
+    // Check if fencer with same Aadhar already exists
+    const existingFencer = await Fencer.findOne({ aadharNumber });
+    if (existingFencer) {
+      return res.status(400).json({
+        success: false,
+        error: 'Fencer with this Aadhar number already exists'
       });
     }
 
@@ -107,7 +115,8 @@ router.post('/register', async (req, res) => {
       selectedDistrict: selectedDistrict,
       districtShortcode: district.code,
       documents: documents || {},
-      status: 'pending'
+      status: 'pending',
+      paymentStatus: 'completed'
     });
 
     await fencer.save();
