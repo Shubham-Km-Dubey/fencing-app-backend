@@ -1,5 +1,7 @@
 const express = require('express');
 const auth = require('../middleware/auth');
+// 👈 NEW: Import the centralized DAF ID utility
+const { generateDAFId } = require('../utils/common'); 
 const User = require('../models/User');
 const District = require('../models/District');
 const Fencer = require('../models/Fencer');
@@ -15,45 +17,39 @@ console.log('Superadmin routes loaded');
 const generateRandomPassword = () => {
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*';
   let pass = '';
-  for (let i = 0; i < 12; i++) {  // ← This line was wrong before, now fixed
+  for (let i = 0; i < 12; i++) {
     pass += chars.charAt(Math.floor(Math.random() * chars.length));
   }
   return pass;
 };
 
-const generateDAFId = (type) => {
-  const prefix = {
-    fencer: 'DAF-F',
-    coach: 'DAF-C',
-    referee: 'DAF-R',
-    school: 'DAF-S',
-    club: 'DAF-CL'
-  }[type];
+// ❌ REMOVED local generateDAFId function which is now in common.js
 
-  const randomNum = Math.floor(1000 + Math.random() * 9000);
-  return `${prefix}${randomNum}${Date.now().toString().slice(-4)}`;
-};
-
-// PUBLIC TEST
-router.get('/test-public', (req, res) => {
-  res.json({ message: 'Super Admin routes working!', time: new Date().toISOString() });
-});
+// ❌ REMOVED PUBLIC TEST route for production readiness
 
 // DASHBOARD STATS
 router.get('/dashboard', auth, async (req, res) => {
   try {
     if (req.user.role !== 'super_admin') return res.status(403).json({ message: 'Access denied' });
 
-    const [totalUsers, pendingCentral, totalDistricts, totalApps] = await Promise.all([
+    // Pending Central Approvals logic is now simplified to just check for unapproved users
+    const [totalUsers, totalDistricts, totalApps] = await Promise.all([
       User.countDocuments({ role: { $ne: 'super_admin' } }),
-      User.countDocuments({ districtApproved: true, centralApproved: false, isApproved: false }),
       District.countDocuments(),
       User.countDocuments({ role: { $in: ['fencer', 'coach', 'referee', 'school', 'club'] } })
     ]);
+    
+    // Count users waiting for ANY approval
+    const pendingApplications = await User.countDocuments({ 
+        isApproved: false, 
+        role: { $in: ['fencer', 'coach', 'referee', 'school', 'club'] } 
+    });
+
 
     res.json({
       totalUsers,
-      pendingCentralApprovals: pendingCentral,
+      // Updated: This now shows total pending applications for all roles
+      totalPendingApprovals: pendingApplications, 
       totalDistricts,
       totalApplications: totalApps,
       totalFencers: await Fencer.countDocuments(),
@@ -69,8 +65,9 @@ router.get('/dashboard', auth, async (req, res) => {
   }
 });
 
-// DISTRICTS
+// DISTRICTS (No major changes needed here)
 router.get('/districts', auth, async (req, res) => {
+    // ... (Keep existing code)
   try {
     if (req.user.role !== 'super_admin') return res.status(403).json({ message: 'Access denied' });
     const districts = await District.find().populate('createdBy', 'name email').sort({ createdAt: -1 });
@@ -82,6 +79,7 @@ router.get('/districts', auth, async (req, res) => {
 });
 
 router.post('/districts', auth, async (req, res) => {
+    // ... (Keep existing code)
   try {
     if (req.user.role !== 'super_admin') return res.status(403).json({ message: 'Access denied' });
 
@@ -132,8 +130,9 @@ router.post('/districts', auth, async (req, res) => {
   }
 });
 
-// DISTRICT ADMIN MANAGEMENT — FINAL WORKING
+// DISTRICT ADMIN MANAGEMENT (No changes needed here)
 router.get('/district-admins', auth, async (req, res) => {
+    // ... (Keep existing code)
   try {
     if (req.user.role !== 'super_admin') {
       return res.status(403).json({ message: 'Access denied' });
@@ -152,6 +151,7 @@ router.get('/district-admins', auth, async (req, res) => {
 });
 
 router.post('/district-admins/:id/reset-password', auth, async (req, res) => {
+    // ... (Keep existing code)
   try {
     if (req.user.role !== 'super_admin') return res.status(403).json({ message: 'Access denied' });
 
@@ -170,6 +170,7 @@ router.post('/district-admins/:id/reset-password', auth, async (req, res) => {
 });
 
 router.put('/district-admins/:id', auth, async (req, res) => {
+    // ... (Keep existing code)
   try {
     if (req.user.role !== 'super_admin') return res.status(403).json({ message: 'Access denied' });
 
@@ -203,6 +204,7 @@ router.put('/district-admins/:id', auth, async (req, res) => {
 });
 
 router.delete('/district-admins/:id', auth, async (req, res) => {
+    // ... (Keep existing code)
   try {
     if (req.user.role !== 'super_admin') return res.status(403).json({ message: 'Access denied' });
 
@@ -218,5 +220,123 @@ router.delete('/district-admins/:id', auth, async (req, res) => {
     res.status(500).json({ message: 'Server error' });
   }
 });
+
+// ==================== SUPER ADMIN APPLICATION MANAGEMENT (SINGLE-STEP APPROVAL) ====================
+
+// Get all unapproved applications (Super Admin view)
+router.get('/member-applications', auth, async (req, res) => {
+    try {
+        if (req.user.role !== 'super_admin') {
+            return res.status(403).json({ message: 'Access denied' });
+        }
+
+        // Find users who have NOT been approved yet (isApproved: false)
+        const unapprovedUsers = await User.find({ 
+            isApproved: false, 
+            role: { $in: ['fencer', 'coach', 'referee', 'school', 'club'] } 
+        })
+        .select('email role district registrationDate name');
+
+        res.json(unapprovedUsers);
+    } catch (error) {
+        console.error('Super Admin /member-applications error:', error.message);
+        res.status(500).json({ message: 'Server error' });
+    }
+});
+
+
+// Approve user by ID (Super Admin action)
+router.post('/approve-user/:userId', auth, async (req, res) => {
+    try {
+        if (req.user.role !== 'super_admin') {
+            return res.status(403).json({ message: 'Access denied' });
+        }
+
+        const userId = req.params.userId;
+        let user = await User.findById(userId);
+
+        if (!user) {
+            return res.status(404).json({ message: 'User not found' });
+        }
+        
+        const userType = user.role;
+
+        // 1. Generate DAF ID
+        const dafId = generateDAFId(userType);
+
+        // 2. Find the associated specific application record
+        let applicationModel = { 
+            'fencer': Fencer, 'coach': Coach, 'referee': Referee, 'school': School, 'club': Club 
+        }[userType];
+
+        let application = await applicationModel.findOne({ userId: userId });
+
+        if (application) {
+            // Update application status
+            application.status = 'approved'; 
+            await application.save();
+        }
+
+        // 3. Update User: Final Approval
+        user.isApproved = true;
+        user.centralApproved = true; // Mark central approval done
+        user.dafId = dafId;
+        user.rejectionReason = undefined;
+        await user.save();
+
+        res.json({ 
+            message: `User ${user.email} approved by Super Admin.`,
+            dafId
+        });
+    } catch (error) {
+        console.error('Super Admin /approve-user error:', error.message);
+        res.status(500).json({ message: 'Server error' });
+    }
+});
+
+// Reject user by ID (Super Admin action)
+router.post('/reject-user/:userId', auth, async (req, res) => {
+    try {
+        if (req.user.role !== 'super_admin') {
+            return res.status(403).json({ message: 'Access denied' });
+        }
+
+        const userId = req.params.userId;
+        const { reason } = req.body;
+
+        let user = await User.findById(userId);
+        if (!user) {
+            return res.status(404).json({ message: 'User not found' });
+        }
+        
+        const userType = user.role;
+
+        // Find the associated specific application record and reject it
+        let applicationModel = { 
+            'fencer': Fencer, 'coach': Coach, 'referee': Referee, 'school': School, 'club': Club 
+        }[userType];
+
+        let application = await applicationModel.findOne({ userId: userId });
+
+        if (application) {
+            application.status = 'rejected'; 
+            await application.save();
+        }
+
+        // Update User: Reset all approval flags
+        user.isApproved = false;
+        user.districtApproved = false;
+        user.centralApproved = false;
+        user.dafId = undefined;
+        user.rejectionReason = reason;
+        await user.save();
+
+        res.json({ message: `User ${user.email} rejected by Super Admin.` });
+    } catch (error) {
+        console.error('Super Admin /reject-user error:', error.message);
+        res.status(500).json({ message: 'Server error' });
+    }
+});
+
 
 module.exports = router;
