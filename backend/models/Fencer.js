@@ -117,7 +117,7 @@ const FencerSchema = new mongoose.Schema({
     // Payment Information
     paymentStatus: {
         type: String,
-        enum: ['pending', 'completed', 'failed'],
+        enum: ['pending', 'completed', 'failed', 'SUCCESS'],
         default: 'pending'
     },
     paymentId: {
