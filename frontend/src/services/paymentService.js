@@ -4,12 +4,11 @@ const API_BASE_URL = process.env.NODE_ENV === 'development'
   ? 'http://localhost:5000'
   : 'https://fencing-app-backend.onrender.com';
 
-// Initialize Cashfree
 let cashfree;
 export const initializeCashfree = async () => {
   try {
     cashfree = await load({
-      mode: process.env.NODE_ENV === 'production' ? 'production' : 'sandbox'
+      mode: 'production' // Changed from sandbox to production
     });
     return cashfree;
   } catch (error) {

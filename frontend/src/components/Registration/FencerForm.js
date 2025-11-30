@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
+import { initializeCashfree, createPaymentSession, verifyPayment } from '../../services/paymentService';
 import '../../styles/FencerForm.css';
 
 // API configuration
@@ -61,15 +62,13 @@ const FencerForm = ({ user, registrationData, onCompleteRegistration }) => {
   const [paymentVerified, setPaymentVerified] = useState(false);
   const [orderId, setOrderId] = useState(null);
 
-  // Fetch districts from API
+  // Fetch districts from NEW public API
   useEffect(() => {
     const fetchDistricts = async () => {
       setLoadingDistricts(true);
       try {
-        const response = await axios.get(`${API_BASE_URL}/api/register/districts`);
-        if (response.data.success) {
-          setDistricts(response.data.data);
-        }
+        const response = await axios.get(`${API_BASE_URL}/api/districts/public`);
+        setDistricts(response.data || []);
       } catch (error) {
         console.error('Failed to fetch districts:', error);
         setMessage('Failed to load districts. Please refresh the page.');
@@ -207,7 +206,6 @@ const FencerForm = ({ user, registrationData, onCompleteRegistration }) => {
     }
     
     if (currentStep === 2) {
-      // Enhanced validation for step 2
       if (!formData.firstName || !formData.lastName || !formData.aadharNumber || !formData.mobileNumber) {
         setMessage('Please fill all required personal information fields');
         return;
@@ -323,31 +321,7 @@ const FencerForm = ({ user, registrationData, onCompleteRegistration }) => {
     }
   };
 
-  // PAYMENT FUNCTIONS - ENHANCED VERSION
-  const createPaymentSession = async (orderData) => {
-    try {
-      console.log('🔄 Creating payment session with data:', orderData);
-      const response = await axios.post(`${API_BASE_URL}/api/payments/create-session`, orderData);
-      console.log('✅ Payment session response:', response.data);
-      return response.data;
-    } catch (error) {
-      console.error('❌ Payment session error:', error.response?.data || error.message);
-      throw new Error(error.response?.data?.error || 'Failed to create payment session');
-    }
-  };
-
-  const verifyPayment = async (orderId) => {
-    try {
-      console.log('🔄 Verifying payment for order:', orderId);
-      const response = await axios.get(`${API_BASE_URL}/api/payments/verify/${orderId}`);
-      console.log('✅ Payment verification response:', response.data);
-      return response.data;
-    } catch (error) {
-      console.error('❌ Payment verification error:', error.response?.data || error.message);
-      throw new Error(error.response?.data?.error || 'Failed to verify payment');
-    }
-  };
-
+  // PAYMENT FUNCTIONS - UPDATED FOR CASHFREE SDK
   const checkPaymentStatus = async (orderId, maxAttempts = 30) => {
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       try {
@@ -376,35 +350,44 @@ const FencerForm = ({ user, registrationData, onCompleteRegistration }) => {
     try {
       setPaymentProcessing(true);
       setMessage('Creating payment session...');
-      
+
+      // Find selected district object to get SHORT CODE from DB
+      const selectedDistrictObj = districts.find(
+        d => d.name === formData.selectedDistrict
+      );
+      const districtShortcode =
+        selectedDistrictObj?.code ||
+        formData.selectedDistrict.toUpperCase().replace(/\s+/g, '_');
+
       // First register the user if not already registered
       if (!user) {
         setMessage('Creating user account...');
         const userRegistrationData = {
+          name: `${formData.firstName} ${formData.lastName}`.trim(),
           email: formData.email,
           password: formData.password,
           role: 'fencer',
           district: formData.selectedDistrict,
-          districtShortcode: formData.selectedDistrict.toUpperCase().replace(' ', '_'),
-          name: `${formData.firstName} ${formData.lastName}`.trim(),
+          districtShortcode,
           phone: formData.mobileNumber || '9999999999'
         };
 
         console.log('👤 Registering user:', userRegistrationData);
 
         try {
-          const registerResponse = await axios.post(`${API_BASE_URL}/api/auth/register`, userRegistrationData);
+          const registerResponse = await axios.post(
+            `${API_BASE_URL}/api/register/register`,
+            userRegistrationData
+          );
           console.log('✅ User registration successful:', registerResponse.data);
           setMessage('User account created. Proceeding to payment...');
         } catch (error) {
           console.error('❌ User registration error:', error.response?.data || error.message);
-          // If user already exists, continue with payment - don't throw error
-          if (error.response?.status === 400 && error.response?.data?.message?.includes('already exists')) {
+          if (error.response?.status === 400 && error.response?.data?.error?.includes('already exists')) {
             console.log('ℹ️ User already exists, continuing with payment...');
             setMessage('User account exists. Proceeding to payment...');
-            // Don't throw error - just continue with payment
           } else {
-            throw new Error('User registration failed: ' + (error.response?.data?.message || error.message));
+            throw new Error('User registration failed: ' + (error.response?.data?.error || error.message));
           }
         }
       }
@@ -417,6 +400,7 @@ const FencerForm = ({ user, registrationData, onCompleteRegistration }) => {
         userType: 'fencer',
         registrationData: {
           ...formData,
+          districtShortcode,
           userId: user?._id,
           paymentAmount: registrationFee,
           paymentStatus: 'PENDING'
@@ -433,37 +417,59 @@ const FencerForm = ({ user, registrationData, onCompleteRegistration }) => {
         localStorage.setItem('pendingPaymentOrderId', paymentSession.data.order_id);
         localStorage.setItem('pendingPaymentUserType', 'fencer');
         
-        if (paymentSession.data.payment_url) {
-          console.log('🔗 Payment URL received:', paymentSession.data.payment_url);
-          
-          // For mock payments
-          if (paymentSession.data.payment_url.includes('/mock-payment')) {
-            setMessage('Processing test payment...');
-            await new Promise(resolve => setTimeout(resolve, 3000));
+        // Initialize Cashfree SDK
+        console.log('🔄 Initializing Cashfree SDK...');
+        const cashfree = await initializeCashfree();
+        
+        // Create checkout options for Cashfree
+        const checkoutOptions = {
+          paymentSessionId: paymentSession.data.payment_session_id,
+          returnUrl: `${window.location.origin}/payment-success?order_id=${paymentSession.data.order_id}&user_type=fencer`,
+          onSuccess: async (data) => {
+            console.log('✅ Payment successful:', data);
+            setMessage('Payment successful! Verifying payment...');
             
-            const paymentResult = await checkPaymentStatus(paymentSession.data.order_id);
-            
-            if (paymentResult.success) {
-              setMessage('Payment successful! Registration completed.');
-              setPaymentVerified(true);
-              setTimeout(() => {
-                onCompleteRegistration();
+            // Verify payment with backend
+            try {
+              const verification = await verifyPayment(paymentSession.data.order_id);
+              if (verification.success && verification.data.payment_status === 'SUCCESS') {
+                setMessage('Payment verified! Registration completed.');
+                setPaymentVerified(true);
                 localStorage.removeItem('pendingPaymentOrderId');
                 localStorage.removeItem('pendingPaymentUserType');
-              }, 2000);
-            } else {
-              setMessage(`Payment failed: ${paymentResult.error}`);
+                
+                setTimeout(() => {
+                  onCompleteRegistration();
+                }, 2000);
+              } else {
+                setMessage('Payment verification failed. Please contact support.');
+                setPaymentProcessing(false);
+                setLoading(false);
+              }
+            } catch (error) {
+              console.error('Payment verification error:', error);
+              setMessage('Payment verification failed. Please contact support.');
               setPaymentProcessing(false);
               setLoading(false);
             }
-          } else {
-            // Real Cashfree payment - redirect
-            console.log('🔗 Redirecting to Cashfree payment page...');
-            window.location.href = paymentSession.data.payment_url;
+          },
+          onFailure: (data) => {
+            console.error('❌ Payment failed:', data);
+            setMessage(`Payment failed: ${data.error?.message || 'Unknown error'}`);
+            setPaymentProcessing(false);
+            setLoading(false);
+            localStorage.removeItem('pendingPaymentOrderId');
+            localStorage.removeItem('pendingPaymentUserType');
+          },
+          onRedirect: (data) => {
+            console.log('🔄 Payment redirecting:', data);
           }
-        } else {
-          throw new Error('Payment URL not received');
-        }
+        };
+
+        console.log('🎯 Opening Cashfree checkout...');
+        // Open Cashfree checkout
+        cashfree.checkout(checkoutOptions);
+        
       } else {
         throw new Error(paymentSession.error || 'Payment initiation failed');
       }
@@ -472,6 +478,8 @@ const FencerForm = ({ user, registrationData, onCompleteRegistration }) => {
       setMessage(`Payment failed: ${error.message}`);
       setPaymentProcessing(false);
       setLoading(false);
+      localStorage.removeItem('pendingPaymentOrderId');
+      localStorage.removeItem('pendingPaymentUserType');
     }
   };
 
@@ -509,7 +517,7 @@ const FencerForm = ({ user, registrationData, onCompleteRegistration }) => {
       
     } catch (error) {
       console.error('❌ Registration error:', error);
-      setMessage(error.response?.data?.message || 'Registration failed. Please try again.');
+      setMessage(error.response?.data?.error || 'Registration failed. Please try again.');
     } finally {
       setLoading(false);
     }
@@ -929,10 +937,12 @@ const FencerForm = ({ user, registrationData, onCompleteRegistration }) => {
                     required
                     disabled={loadingDistricts}
                   >
-                    <option value="">{loadingDistricts ? 'Loading districts...' : 'Choose your district association'}</option>
+                    <option value="">
+                      {loadingDistricts ? 'Loading districts...' : 'Choose your district association'}
+                    </option>
                     {districts.map(district => (
-                      <option key={district._id} value={district.name}>
-                        {district.name} {district.adminName && `- Admin: ${district.adminName}`}
+                      <option key={district._id || district.code} value={district.name}>
+                        {district.name} {district.code ? `(${district.code})` : ''}
                       </option>
                     ))}
                   </select>
@@ -1152,7 +1162,10 @@ const FencerForm = ({ user, registrationData, onCompleteRegistration }) => {
                 Payment Information
               </h2>
               <div className="payment-notice">
-                <h3>Registration Fee: ₹{registrationFee}</h3>
+                <h3>
+                  Registration Fee:{' '}
+                  {feeLoading ? 'Loading...' : `₹${registrationFee}`}
+                </h3>
                 <p>Complete your registration by making the payment. You will be redirected to secure payment gateway.</p>
                
                 {process.env.NODE_ENV !== 'production' && (
@@ -1197,7 +1210,7 @@ const FencerForm = ({ user, registrationData, onCompleteRegistration }) => {
                 ) : (loading || paymentProcessing) ? (
                   <>
                     <div className="spinner"></div>
-                    {paymentProcessing ? 'Redirecting to Payment...' : 'Processing...'}
+                    {paymentProcessing ? 'Processing Payment...' : 'Processing...'}
                   </>
                 ) : (
                   <>
@@ -1213,5 +1226,4 @@ const FencerForm = ({ user, registrationData, onCompleteRegistration }) => {
     </div>
   );
 };
-
 export default FencerForm;

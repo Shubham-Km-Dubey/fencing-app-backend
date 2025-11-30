@@ -1,20 +1,36 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 
+const API_BASE_URL =
+  process.env.NODE_ENV === 'development'
+    ? 'http://localhost:5000'
+    : 'https://fencing-app-backend.onrender.com';
+
 const FencerDashboard = ({ user, onLogout }) => {
   const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     fetchUserProfile();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const fetchUserProfile = async () => {
     try {
-      const token = user.token;
-      const response = await axios.get('http://localhost:5000/api/users/profile', {
-        headers: { Authorization: `Bearer ${token}` }
+      const tokenFromUser = user?.token;
+      const tokenFromStorage = localStorage.getItem('token');
+      const token = tokenFromUser || tokenFromStorage;
+
+      if (!token) {
+        console.error('No auth token found for fetching profile');
+        setLoading(false);
+        return;
+      }
+
+      const response = await axios.get(`${API_BASE_URL}/api/users/profile`, {
+        headers: { Authorization: `Bearer ${token}` },
       });
+
       setProfile(response.data);
       setLoading(false);
     } catch (error) {
@@ -31,16 +47,17 @@ const FencerDashboard = ({ user, onLogout }) => {
         message: 'Your registration has been approved by Delhi Fencing Association.',
         icon: '✅',
         color: 'success',
-        showDAFId: true
+        showDAFId: true,
       };
     } else if (user.districtApproved && !user.centralApproved) {
       return {
         status: 'pending_central',
         title: 'Pending Central Approval',
-        message: 'Your application has been approved by district admin and is waiting for central approval.',
+        message:
+          'Your application has been approved by district admin and is waiting for central approval.',
         icon: '⏳',
         color: 'warning',
-        showDAFId: false
+        showDAFId: false,
       };
     } else if (user.rejectionReason) {
       return {
@@ -49,7 +66,7 @@ const FencerDashboard = ({ user, onLogout }) => {
         message: 'Your application needs some corrections before it can be approved.',
         icon: '❌',
         color: 'danger',
-        showDAFId: false
+        showDAFId: false,
       };
     } else {
       return {
@@ -58,7 +75,7 @@ const FencerDashboard = ({ user, onLogout }) => {
         message: 'Your application is being reviewed by the district admin.',
         icon: '⏳',
         color: 'warning',
-        showDAFId: false
+        showDAFId: false,
       };
     }
   };
@@ -121,7 +138,7 @@ const FencerDashboard = ({ user, onLogout }) => {
                 <div className="stat-trend">Available soon</div>
               </div>
             </div>
-            
+
             <div className="stat-card">
               <div className="stat-icon">
                 <i className="fas fa-medal"></i>
@@ -132,7 +149,7 @@ const FencerDashboard = ({ user, onLogout }) => {
                 <div className="stat-trend">Participate to get ranked</div>
               </div>
             </div>
-            
+
             <div className="stat-card">
               <div className="stat-icon">
                 <i className="fas fa-calendar"></i>
@@ -143,7 +160,7 @@ const FencerDashboard = ({ user, onLogout }) => {
                 <div className="stat-trend">Check back later</div>
               </div>
             </div>
-            
+
             <div className="stat-card">
               <div className="stat-icon">
                 <i className="fas fa-award"></i>
@@ -163,13 +180,13 @@ const FencerDashboard = ({ user, onLogout }) => {
             <div className="profile-card">
               <div className="profile-header">
                 <h3>
-                  {profile.profile.firstName} 
-                  {profile.profile.middleName && ` ${profile.profile.middleName}`} 
+                  {profile.profile.firstName}
+                  {profile.profile.middleName && ` ${profile.profile.middleName}`}
                   {profile.profile.lastName && ` ${profile.profile.lastName}`}
                 </h3>
                 <span className="user-role-badge">Fencer</span>
               </div>
-              
+
               <div className="profile-details">
                 <div className="detail-group">
                   <h4>Personal Information</h4>
@@ -200,7 +217,7 @@ const FencerDashboard = ({ user, onLogout }) => {
                       <span className="detail-label">Address:</span>
                       <span className="detail-value">
                         {profile.profile.permanentAddress.addressLine1}
-                        {profile.profile.permanentAddress.addressLine2 && 
+                        {profile.profile.permanentAddress.addressLine2 &&
                           `, ${profile.profile.permanentAddress.addressLine2}`}
                       </span>
                     </div>
@@ -235,7 +252,9 @@ const FencerDashboard = ({ user, onLogout }) => {
                     {profile.profile.highestAchievement && (
                       <div className="detail-row">
                         <span className="detail-label">Highest Achievement:</span>
-                        <span className="detail-value">{profile.profile.highestAchievement}</span>
+                        <span className="detail-value">
+                          {profile.profile.highestAchievement}
+                        </span>
                       </div>
                     )}
                   </div>

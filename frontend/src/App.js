@@ -10,6 +10,7 @@ import CoachForm from './components/Registration/CoachForm';
 import RefereeForm from './components/Registration/RefereeForm';
 import SchoolForm from './components/Registration/SchoolForm';
 import ClubForm from './components/Registration/ClubForm';
+import PaymentSuccess from './pages/PaymentSuccess';
 import './styles/App.css';
 
 function App() {
@@ -19,11 +20,11 @@ function App() {
   useEffect(() => {
     const userData = localStorage.getItem('user');
     const token = localStorage.getItem('token');
-    
+
     if (userData) {
       setUser(JSON.parse(userData));
     }
-    
+
     // Debug: Check if token exists
     console.log('🔐 App Mount - Token check:', token ? 'Present' : 'Missing');
     console.log('🔐 App Mount - User check:', userData ? 'Present' : 'Missing');
@@ -31,10 +32,10 @@ function App() {
 
   const login = (userData) => {
     console.log('🔐 Login called with userData:', userData);
-    
+
     setUser(userData);
     localStorage.setItem('user', JSON.stringify(userData));
-    
+
     // CRITICAL FIX: Store the token separately
     if (userData.token) {
       localStorage.setItem('token', userData.token);
@@ -118,6 +119,10 @@ function App() {
           <Route 
             path="/register/club" 
             element={<ClubForm user={user} registrationData={registrationData} onCompleteRegistration={completeRegistration} />} 
+          />
+          <Route 
+            path="/payment-success" 
+            element={<PaymentSuccess />} 
           />
         </Routes>
       </div>

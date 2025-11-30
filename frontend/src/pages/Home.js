@@ -21,7 +21,6 @@ const Home = ({ onLogin, onStartRegistration }) => {
   });
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
-  const [showDemoCredentials, setShowDemoCredentials] = useState(false);
   const [registrationFees, setRegistrationFees] = useState({});
   const [feesLoading, setFeesLoading] = useState(true);
   const navigate = useNavigate();
@@ -67,14 +66,36 @@ const Home = ({ onLogin, onStartRegistration }) => {
     e.preventDefault();
     setLoading(true);
     setMessage('');
-    
+
     try {
       const response = await axios.post(`${API_BASE_URL}/api/auth/login`, loginData);
-      onLogin(response.data);
+      const data = response.data || {};
+
+      console.log('🔐 Login API response:', data);
+
+      // Support both shapes:
+      // 1) { token, user: { ... } }
+      // 2) { token, email, role, ... } (flattened)
+      const token = data.token;
+      const backendUser = data.user || data;
+
+      if (!token) {
+        console.error('❌ No token received from backend');
+        setMessage('Login failed. Server did not return a token.');
+        setLoading(false);
+        return;
+      }
+
+      const userForApp = {
+        ...backendUser,
+        token
+      };
+
+      onLogin(userForApp);
       setMessage('Login successful! Redirecting...');
     } catch (error) {
+      console.error('Login error:', error?.response?.data || error.message);
       setMessage('Login failed. Please check your credentials.');
-      console.error('Login error:', error);
     } finally {
       setLoading(false);
     }
@@ -219,40 +240,6 @@ const Home = ({ onLogin, onStartRegistration }) => {
                     )}
                   </button>
                 </form>
-
-                {/* Demo Credentials Toggle */}
-                <div className="demo-toggle">
-                  <button 
-                    className="demo-toggle-btn"
-                    onClick={() => setShowDemoCredentials(!showDemoCredentials)}
-                  >
-                    <i className={`fas fa-chevron-${showDemoCredentials ? 'up' : 'down'}`}></i>
-                    {showDemoCredentials ? 'Hide Demo Credentials' : 'Show Demo Credentials'}
-                  </button>
-
-                  {showDemoCredentials && (
-                    <div className="demo-credentials-panel">
-                      <h4>Demo Access Accounts</h4>
-                      <div className="demo-accounts">
-                        <div className="demo-account">
-                          <div className="demo-role">Super Admin</div>
-                          <div className="demo-credential">Email: superadmin@daf.com</div>
-                          <div className="demo-credential">Password: superadmin123</div>
-                        </div>
-                        <div className="demo-account">
-                          <div className="demo-role">North East District Admin</div>
-                          <div className="demo-credential">Email: northeast@daf.com</div>
-                          <div className="demo-credential">Password: admin123</div>
-                        </div>
-                        <div className="demo-account">
-                          <div className="demo-role">North West District Admin</div>
-                          <div className="demo-credential">Email: northwest@daf.com</div>
-                          <div className="demo-credential">Password: admin123</div>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                </div>
               </div>
             </div>
           </section>
