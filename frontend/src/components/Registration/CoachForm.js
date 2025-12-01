@@ -1,12 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import axios from 'axios';
 import { initializeCashfree, createPaymentSession, verifyPayment } from '../../services/paymentService';
 import '../../styles/CoachForm.css';
 
 // API configuration
-const API_BASE_URL = process.env.NODE_ENV === 'development'
-  ? 'http://localhost:5000'
-  : 'https://fencing-app-backend.onrender.com';
+const API_BASE_URL = process.env.REACT_APP_API_BASE_URL || 'https://fencing-app-backend.onrender.com';
 
 const CoachForm = ({ user, registrationData, onCompleteRegistration }) => {
   const [currentStep, setCurrentStep] = useState(1);
@@ -14,9 +12,9 @@ const CoachForm = ({ user, registrationData, onCompleteRegistration }) => {
   const [loadingDistricts, setLoadingDistricts] = useState(false);
   const [registrationFee, setRegistrationFee] = useState(500);
   const [feeLoading, setFeeLoading] = useState(true);
-  const [paymentProcessing, setPaymentProcessing] = useState(false);
-  const [paymentVerified, setPaymentVerified] = useState(false);
-  const [orderId, setOrderId] = useState(null);
+  const [isEditMode, setIsEditMode] = useState(false);
+  const [editApplicationId, setEditApplicationId] = useState(null);
+  const [editApplicationData, setEditApplicationData] = useState(null);
   const [formData, setFormData] = useState({
     email: '',
     password: '',
@@ -62,72 +60,168 @@ const CoachForm = ({ user, registrationData, onCompleteRegistration }) => {
   const [message, setMessage] = useState('');
   const [uploadProgress, setUploadProgress] = useState({});
   const [isSameAddress, setIsSameAddress] = useState(false);
+  const [paymentProcessing, setPaymentProcessing] = useState(false);
+  const [paymentVerified, setPaymentVerified] = useState(false);
+  const [isResubmitting, setIsResubmitting] = useState(false);
+
+  // Check if we're in edit mode (from ApplicationStatus.js)
+  useEffect(() => {
+    const storedEditData = localStorage.getItem('editApplicationData');
+    if (storedEditData) {
+      try {
+        const editData = JSON.parse(storedEditData);
+        if (editData.isEditMode && editData.userType === 'coach') {
+          setIsEditMode(true);
+          setEditApplicationId(editData.applicationId);
+          setEditApplicationData(editData);
+
+          // Pre-fill form with existing data
+          setFormData(prev => ({
+            ...prev,
+            email: editData.email || user?.email || '',
+            firstName: editData.firstName || '',
+            middleName: editData.middleName || '',
+            lastName: editData.lastName || '',
+            aadharNumber: editData.aadharNumber || '',
+            fathersName: editData.fathersName || '',
+            mothersName: editData.mothersName || '',
+            mobileNumber: editData.mobileNumber || '',
+            dateOfBirth: editData.dateOfBirth ? new Date(editData.dateOfBirth).toISOString().split('T')[0] : '',
+            permanentAddress: editData.permanentAddress || {
+              addressLine1: '',
+              addressLine2: '',
+              state: '',
+              district: '',
+              pinCode: ''
+            },
+            presentAddress: editData.presentAddress || {
+              addressLine1: '',
+              addressLine2: '',
+              state: '',
+              district: '',
+              pinCode: ''
+            },
+            highestAchievement: editData.highestAchievement || '',
+            level: editData.level || '',
+            trainingCenter: editData.trainingCenter || '',
+            selectedDistrict: editData.selectedDistrict || '',
+            documents: editData.documents || {
+              photo: '',
+              aadharFront: '',
+              aadharBack: '',
+              coachCertificate: '',
+              doc1: '',
+              doc2: '',
+              doc3: ''
+            }
+          }));
+
+          // Check if present address is same as permanent
+          if (editData.presentAddress && editData.permanentAddress) {
+            const isSame = JSON.stringify(editData.presentAddress) === JSON.stringify(editData.permanentAddress);
+            setIsSameAddress(isSame);
+          }
+
+          setMessage('Edit mode activated. You can update your application.');
+
+          // Remove from localStorage after loading
+          localStorage.removeItem('editApplicationData');
+        }
+      } catch (error) {
+        console.error('Error parsing edit data:', error);
+      }
+    }
+  }, [user]);
 
   // FIXED: Fetch districts from correct API endpoint
-  useEffect(() => {
-    const fetchDistricts = async () => {
-      setLoadingDistricts(true);
-      try {
-        console.log('🌐 Fetching districts from API...');
-        
-        // Use the CORRECT endpoint: /api/districts/public
-        const response = await axios.get(`${API_BASE_URL}/api/districts/public`);
-        console.log('📥 Districts API response:', response.data);
+// In CoachForm.js - Update the districts fetch useEffect
+useEffect(() => {
+  const fetchDistricts = async () => {
+    setLoadingDistricts(true);
+    try {
+      console.log('🌐 Fetching districts from API...');
+      
+      // Use the CORRECT endpoint: /api/districts/public
+      const response = await axios.get(`${API_BASE_URL}/api/districts/public`);
+      console.log('📥 Districts API response:', response.data);
 
-        // The response should be a direct array of districts
-        if (response.data && Array.isArray(response.data)) {
-          setDistricts(response.data);
-          console.log('✅ Districts loaded successfully:', response.data.length, 'districts found');
-        } else {
-          console.warn('Unexpected districts response structure:', response.data);
-          setDistricts([]);
-        }
-        
-      } catch (error) {
-        console.error('❌ Failed to fetch districts:', error);
-        console.error('Error details:', error.response?.data);
+      // The response from /api/districts/public should be a direct array of districts
+      let districtList = [];
+      
+      if (Array.isArray(response.data)) {
+        districtList = response.data;
+        console.log('✅ Districts loaded successfully:', districtList.length, 'districts found');
+      } else {
+        console.warn('Unexpected districts response structure:', response.data);
         setDistricts([]);
-        setMessage('Unable to load districts list. Please contact administrator.');
-      } finally {
-        setLoadingDistricts(false);
       }
-    };
-    fetchDistricts();
-  }, []);
-
-  // Fetch registration fee from API
+      
+      // Filter active districts
+      const activeDistricts = districtList.filter(d => d.isActive !== false && d.name);
+      setDistricts(activeDistricts);
+      
+    } catch (error) {
+      console.error('❌ Failed to fetch districts:', error);
+      console.error('Error details:', error.response?.data);
+      
+      // Fallback Delhi districts
+      const fallback = [
+        { _id: '1', name: 'Central Delhi', code: 'CD' },
+        { _id: '2', name: 'North Delhi', code: 'ND' },
+        { _id: '3', name: 'South Delhi', code: 'SD' },
+        { _id: '4', name: 'East Delhi', code: 'ED' },
+        { _id: '5', name: 'North East Delhi', code: 'NED' },
+        { _id: '6', name: 'North West Delhi', code: 'NWD' },
+        { _id: '7', name: 'West Delhi', code: 'WD' },
+        { _id: '8', name: 'South West Delhi', code: 'SWD' },
+        { _id: '9', name: 'New Delhi', code: 'ND' }
+      ];
+      setDistricts(fallback);
+      
+      setMessage('Using default districts (server unreachable).');
+    } finally {
+      setLoadingDistricts(false);
+    }
+  };
+  fetchDistricts();
+}, []);
+  // Fetch registration fee from API (only for new registrations)
   useEffect(() => {
-    const fetchRegistrationFee = async () => {
-      try {
-        const response = await axios.get(`${API_BASE_URL}/api/fees/coach`);
-        if (response.data.success) {
-          setRegistrationFee(response.data.data.amount);
-          console.log('✅ Registration fee loaded:', response.data.data.amount);
+    if (!isEditMode) {
+      const fetchRegistrationFee = async () => {
+        try {
+          const response = await axios.get(`${API_BASE_URL}/api/fees/coach`);
+          if (response.data.success) {
+            setRegistrationFee(response.data.data.amount);
+            console.log('✅ Registration fee loaded:', response.data.data.amount);
+          }
+        } catch (error) {
+          console.error('Failed to fetch registration fee:', error);
+          setRegistrationFee(500);
+        } finally {
+          setFeeLoading(false);
         }
-      } catch (error) {
-        console.error('Failed to fetch registration fee:', error);
-        setRegistrationFee(500);
-      } finally {
-        setFeeLoading(false);
-      }
-    };
-    fetchRegistrationFee();
-  }, []);
+      };
+      fetchRegistrationFee();
+    } else {
+      setFeeLoading(false);
+    }
+  }, [isEditMode]);
 
   // FIXED: Check for pending payments ONLY when returning from payment gateway
   useEffect(() => {
     const urlParams = new URLSearchParams(window.location.search);
     const orderId = urlParams.get('order_id');
     const userType = urlParams.get('user_type');
-    
-    if (orderId && userType === 'coach') {
+
+    if (orderId && userType === 'coach' && !isEditMode) {
       const checkPendingPayment = async () => {
         setMessage('Verifying your payment...');
         setLoading(true);
-        
+
         try {
           const paymentResult = await checkPaymentStatus(orderId);
-          
+
           if (paymentResult.success) {
             setMessage('Payment verified! Registration completed.');
             setPaymentVerified(true);
@@ -148,25 +242,25 @@ const CoachForm = ({ user, registrationData, onCompleteRegistration }) => {
           setLoading(false);
         }
       };
-      
+
       checkPendingPayment();
     }
-  }, [onCompleteRegistration]);
+  }, [onCompleteRegistration, isEditMode]);
 
   // Pre-fill email and district if available from registration
   useEffect(() => {
-    if (registrationData) {
+    if (registrationData && !isEditMode) {
       setFormData(prev => ({
         ...prev,
         email: user?.email || '',
         selectedDistrict: registrationData.district || ''
       }));
     }
-  }, [registrationData, user]);
+  }, [registrationData, user, isEditMode]);
 
   const handleInputChange = (e) => {
     const { name, value } = e.target;
-    
+
     if (name.includes('.')) {
       const [parent, child] = name.split('.');
       setFormData(prev => ({
@@ -184,7 +278,8 @@ const CoachForm = ({ user, registrationData, onCompleteRegistration }) => {
     }
   };
 
-  const handleAddressCopy = () => {
+  // FIXED: handleAddressCopy as useCallback to fix React warning
+  const handleAddressCopy = useCallback(() => {
     if (isSameAddress) {
       setFormData(prev => ({
         ...prev,
@@ -202,31 +297,44 @@ const CoachForm = ({ user, registrationData, onCompleteRegistration }) => {
         }
       }));
     }
-  };
+  }, [isSameAddress]);
 
   useEffect(() => {
     handleAddressCopy();
-  }, [isSameAddress]);
+  }, [isSameAddress, handleAddressCopy]);
 
   const nextStep = () => {
     if (currentStep === 1) {
-      if (!formData.email || !formData.password || !formData.confirmPassword) {
-        setMessage('Please fill all required fields in login credentials');
-        return;
-      }
-      if (formData.password !== formData.confirmPassword) {
-        setMessage('Passwords do not match');
-        return;
-      }
-      if (formData.password.length < 6) {
-        setMessage('Password must be at least 6 characters long');
-        return;
+      // For edit mode, skip password validation if passwords are empty
+      if (!isEditMode) {
+        if (!formData.email || !formData.password || !formData.confirmPassword) {
+          setMessage('Please fill all required fields in login credentials');
+          return;
+        }
+        if (formData.password !== formData.confirmPassword) {
+          setMessage('Passwords do not match');
+          return;
+        }
+        if (formData.password.length < 6) {
+          setMessage('Password must be at least 6 characters long');
+          return;
+        }
+      } else {
+        // In edit mode, only validate email
+        if (!formData.email) {
+          setMessage('Email is required');
+          return;
+        }
       }
     }
-    
+
     if (currentStep === 2) {
       if (!formData.selectedDistrict) {
         setMessage('Please select your district');
+        return;
+      }
+      if (!formData.level) {
+        setMessage('Please select your coaching level');
         return;
       }
     }
@@ -243,10 +351,10 @@ const CoachForm = ({ user, registrationData, onCompleteRegistration }) => {
   const handleFileUpload = async (file, fieldName) => {
     const uploadFormData = new FormData();
     uploadFormData.append('file', file);
-    
+
     try {
       setUploadProgress(prev => ({ ...prev, [fieldName]: 0 }));
-      
+
       const response = await axios.post(`${API_BASE_URL}/api/upload/single`, uploadFormData, {
         headers: {
           'Content-Type': 'multipart/form-data',
@@ -265,7 +373,7 @@ const CoachForm = ({ user, registrationData, onCompleteRegistration }) => {
             [fieldName]: response.data.data.downloadURL
           }
         }));
-        
+
         setUploadProgress(prev => ({ ...prev, [fieldName]: null }));
         return response.data.data.downloadURL;
       } else {
@@ -321,7 +429,7 @@ const CoachForm = ({ user, registrationData, onCompleteRegistration }) => {
   const handleDrop = (e, fieldName) => {
     e.preventDefault();
     e.currentTarget.classList.remove('drag-over');
-    
+
     const files = e.dataTransfer.files;
     if (files.length > 0) {
       handleFileChange({ target: { files } }, fieldName);
@@ -334,7 +442,7 @@ const CoachForm = ({ user, registrationData, onCompleteRegistration }) => {
       try {
         console.log(`🔄 Payment check attempt ${attempt}/${maxAttempts}`);
         const result = await verifyPayment(orderId);
-        
+
         if (result.data?.payment_status === 'SUCCESS' || result.data?.order_status === 'PAID') {
           console.log('✅ Payment successful!');
           return { success: true, data: result.data };
@@ -342,15 +450,84 @@ const CoachForm = ({ user, registrationData, onCompleteRegistration }) => {
           console.log('❌ Payment failed');
           return { success: false, error: 'Payment failed' };
         }
-        
+
         console.log('⏳ Payment still processing, waiting...');
         await new Promise(resolve => setTimeout(resolve, 2000));
       } catch (error) {
         console.error(`❌ Payment check attempt ${attempt} failed:`, error);
       }
     }
-    
+
     return { success: false, error: 'Payment verification timeout' };
+  };
+
+  // NEW: Function to update existing application (for edit mode)
+  const updateCoachApplication = async () => {
+    try {
+      setIsResubmitting(true);
+      setMessage('Updating your application...');
+
+      const token = localStorage.getItem('user') ? JSON.parse(localStorage.getItem('user')).token : null;
+
+      if (!token) {
+        throw new Error('Authentication required. Please log in again.');
+      }
+
+      // Prepare update data (exclude password fields in edit mode)
+      const updateData = {
+        firstName: formData.firstName,
+        middleName: formData.middleName,
+        lastName: formData.lastName,
+        aadharNumber: formData.aadharNumber,
+        fathersName: formData.fathersName,
+        mothersName: formData.mothersName,
+        mobileNumber: formData.mobileNumber,
+        dateOfBirth: formData.dateOfBirth,
+        permanentAddress: formData.permanentAddress,
+        presentAddress: formData.presentAddress,
+        highestAchievement: formData.highestAchievement,
+        level: formData.level,
+        trainingCenter: formData.trainingCenter,
+        selectedDistrict: formData.selectedDistrict,
+        documents: formData.documents
+      };
+
+      console.log('Updating coach application with ID:', editApplicationId, updateData);
+
+      const response = await axios.put(
+        `${API_BASE_URL}/api/admin/update-application/coach/${editApplicationId}`,
+        updateData,
+        {
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json'
+          }
+        }
+      );
+
+      if (response.data.success) {
+        setMessage('Application updated successfully! Submitted for district admin review.');
+
+        // Clear edit mode flags
+        setIsEditMode(false);
+        setEditApplicationId(null);
+        setEditApplicationData(null);
+
+        // Redirect to application status after delay
+        setTimeout(() => {
+          window.location.href = '/application-status';
+        }, 2000);
+
+        return response.data;
+      } else {
+        throw new Error(response.data.message || 'Update failed');
+      }
+    } catch (error) {
+      console.error('Error updating coach application:', error);
+      throw new Error('Failed to update application: ' + (error.response?.data?.message || error.message));
+    } finally {
+      setIsResubmitting(false);
+    }
   };
 
   const initiatePayment = async () => {
@@ -417,17 +594,15 @@ const CoachForm = ({ user, registrationData, onCompleteRegistration }) => {
       console.log('💰 Payment order data for amount:', registrationFee, orderData);
 
       const paymentSession = await createPaymentSession(orderData);
-      
+
       if (paymentSession.success) {
-        setOrderId(paymentSession.data.order_id);
-        
         localStorage.setItem('pendingPaymentOrderId', paymentSession.data.order_id);
         localStorage.setItem('pendingPaymentUserType', 'coach');
-        
+
         // Initialize Cashfree SDK
         console.log('🔄 Initializing Cashfree SDK...');
         const cashfree = await initializeCashfree();
-        
+
         // Create checkout options for Cashfree
         const checkoutOptions = {
           paymentSessionId: paymentSession.data.payment_session_id,
@@ -435,7 +610,7 @@ const CoachForm = ({ user, registrationData, onCompleteRegistration }) => {
           onSuccess: async (data) => {
             console.log('✅ Payment successful:', data);
             setMessage('Payment successful! Verifying payment...');
-            
+
             // Verify payment with backend
             try {
               const verification = await verifyPayment(paymentSession.data.order_id);
@@ -444,7 +619,7 @@ const CoachForm = ({ user, registrationData, onCompleteRegistration }) => {
                 setPaymentVerified(true);
                 localStorage.removeItem('pendingPaymentOrderId');
                 localStorage.removeItem('pendingPaymentUserType');
-                
+
                 setTimeout(() => {
                   onCompleteRegistration();
                 }, 2000);
@@ -476,7 +651,7 @@ const CoachForm = ({ user, registrationData, onCompleteRegistration }) => {
         console.log('🎯 Opening Cashfree checkout...');
         // Open Cashfree checkout
         cashfree.checkout(checkoutOptions);
-        
+
       } else {
         throw new Error(paymentSession.error || 'Payment initiation failed');
       }
@@ -496,14 +671,16 @@ const CoachForm = ({ user, registrationData, onCompleteRegistration }) => {
     setMessage('');
 
     try {
-      // Validate required documents
-      const requiredDocs = ['photo', 'aadharFront', 'aadharBack', 'coachCertificate'];
-      const missingDocs = requiredDocs.filter(doc => !formData.documents[doc]);
+      // Validate required documents (only for new registrations or if documents are missing)
+      if (!isEditMode) {
+        const requiredDocs = ['photo', 'aadharFront', 'aadharBack', 'coachCertificate'];
+        const missingDocs = requiredDocs.filter(doc => !formData.documents[doc]);
 
-      if (missingDocs.length > 0) {
-        setMessage(`Please upload all required documents: ${missingDocs.join(', ')}`);
-        setLoading(false);
-        return;
+        if (missingDocs.length > 0) {
+          setMessage(`Please upload all required documents: ${missingDocs.join(', ')}`);
+          setLoading(false);
+          return;
+        }
       }
 
       // Validate district selection
@@ -520,12 +697,19 @@ const CoachForm = ({ user, registrationData, onCompleteRegistration }) => {
         return;
       }
 
-      console.log('🚀 Starting payment process for amount:', registrationFee);
-      await initiatePayment();
-      
+      if (isEditMode) {
+        // EDIT MODE: Update existing application (no payment needed)
+        console.log('Starting application update...');
+        await updateCoachApplication();
+      } else {
+        // NEW REGISTRATION: Proceed with payment
+        console.log('🚀 Starting payment process for amount:', registrationFee);
+        await initiatePayment();
+      }
+
     } catch (error) {
-      setMessage(error.response?.data?.message || 'Registration failed. Please try again.');
-      console.error('Registration error:', error);
+      setMessage(error.response?.data?.message || error.message || 'Registration failed. Please try again.');
+      console.error('Registration/Update error:', error);
     } finally {
       setLoading(false);
     }
@@ -545,7 +729,7 @@ const CoachForm = ({ user, registrationData, onCompleteRegistration }) => {
     <div className="step-indicator">
       <div className={`step ${currentStep >= 1 ? 'active' : ''} ${currentStep > 1 ? 'completed' : ''}`}>
         <div className="step-number">1</div>
-        <div className="step-label">Login Credentials</div>
+        <div className="step-label">{isEditMode ? 'Account Info' : 'Login Credentials'}</div>
       </div>
       <div className={`step ${currentStep >= 2 ? 'active' : ''} ${currentStep > 2 ? 'completed' : ''}`}>
         <div className="step-number">2</div>
@@ -553,37 +737,65 @@ const CoachForm = ({ user, registrationData, onCompleteRegistration }) => {
       </div>
       <div className={`step ${currentStep >= 3 ? 'active' : ''}`}>
         <div className="step-number">3</div>
-        <div className="step-label">Documents & Payment</div>
+        <div className="step-label">{isEditMode ? 'Documents & Update' : 'Documents & Payment'}</div>
       </div>
     </div>
   );
 
+  // Cancel edit mode
+  const handleCancelEdit = () => {
+    if (window.confirm('Are you sure you want to cancel editing? Your changes will be lost.')) {
+      setIsEditMode(false);
+      setEditApplicationId(null);
+      setEditApplicationData(null);
+      window.location.href = '/application-status';
+    }
+  };
+
   return (
     <div className="coach-form-container">
       <div className="form-header">
-        <h1>Coach Registration</h1>
-        <p>Complete your profile to join Delhi Fencing Association as a Coach</p>
+        <h1>
+          {isEditMode ? '✏️ Edit Coach Application' : 'Coach Registration'}
+          {isEditMode && <span className="edit-badge">Edit Mode</span>}
+        </h1>
+        <p>
+          {isEditMode
+            ? 'Update your application details and resubmit for district admin review.'
+            : 'Complete your profile to join Delhi Fencing Association as a Coach'}
+        </p>
+        {isEditMode && (
+          <div className="edit-mode-notice">
+            <p><strong>Note:</strong> You're editing a previously rejected application. No payment is required for resubmission.</p>
+            <button className="cancel-edit-btn" onClick={handleCancelEdit}>
+              Cancel Edit
+            </button>
+          </div>
+        )}
       </div>
 
       <StepIndicator />
 
       {message && (
-        <div className={`message ${message.includes('successful') ? 'success' : 'error'}`}>
+        <div className={`message ${message.includes('success') ? 'success' : 'error'}`}>
           {message}
         </div>
       )}
 
       <form onSubmit={handleSubmit} className="coach-form">
-        
-        {/* Step 1: Login Credentials */}
+
+        {/* Step 1: Login Credentials / Account Info */}
         {currentStep === 1 && (
           <section className="form-section login-credentials-section">
             <h2 className="section-title">
-              <i className="fas fa-lock"></i>
-              Login Credentials
+              {isEditMode ? 'Account Information' : 'Login Credentials'}
             </h2>
-            <p className="section-subtitle">Create your login credentials for future access</p>
-            
+            <p className="section-subtitle">
+              {isEditMode
+                ? 'Your account information (password optional for updates)'
+                : 'Create your login credentials for future access'}
+            </p>
+
             <div className="form-row">
               <div className="form-group full-width">
                 <label htmlFor="email">Email Address *</label>
@@ -595,56 +807,82 @@ const CoachForm = ({ user, registrationData, onCompleteRegistration }) => {
                   onChange={handleInputChange}
                   required
                   placeholder="Enter your email address"
+                  disabled={isEditMode} // Email cannot be changed in edit mode
                 />
+                {isEditMode && <small className="field-note">Email cannot be changed</small>}
               </div>
             </div>
 
-            <div className="form-row">
-              <div className="form-group">
-                <label htmlFor="password">Password *</label>
-                <input
-                  type="password"
-                  id="password"
-                  name="password"
-                  value={formData.password}
-                  onChange={handleInputChange}
-                  required
-                  placeholder="Create a password"
-                  minLength="6"
-                />
-                {formData.password && (
-                  <div className={`password-strength ${
-                    formData.password.length < 6 ? 'weak' : 
-                    formData.password.length < 8 ? 'medium' : 'strong'
-                  }`}>
-                    {formData.password.length < 6 ? 'Weak password' : 
-                     formData.password.length < 8 ? 'Medium strength' : 'Strong password'}
+            {!isEditMode && (
+              <>
+                <div className="form-row">
+                  <div className="form-group">
+                    <label htmlFor="password">Password *</label>
+                    <input
+                      type="password"
+                      id="password"
+                      name="password"
+                      value={formData.password}
+                      onChange={handleInputChange}
+                      required
+                      placeholder="Create a password"
+                      minLength="6"
+                    />
+                    {formData.password && (
+                      <div className={`password-strength ${formData.password.length < 6 ? 'weak' :
+                          formData.password.length < 8 ? 'medium' : 'strong'
+                        }`}>
+                        {formData.password.length < 6 ? 'Weak password' :
+                          formData.password.length < 8 ? 'Medium strength' : 'Strong password'}
+                      </div>
+                    )}
                   </div>
-                )}
-              </div>
 
-              <div className="form-group">
-                <label htmlFor="confirmPassword">Confirm Password *</label>
-                <input
-                  type="password"
-                  id="confirmPassword"
-                  name="confirmPassword"
-                  value={formData.confirmPassword}
-                  onChange={handleInputChange}
-                  required
-                  placeholder="Confirm your password"
-                  minLength="6"
-                />
-                {formData.confirmPassword && formData.password !== formData.confirmPassword && (
-                  <div className="password-strength weak">
-                    Passwords do not match
+                  <div className="form-group">
+                    <label htmlFor="confirmPassword">Confirm Password *</label>
+                    <input
+                      type="password"
+                      id="confirmPassword"
+                      name="confirmPassword"
+                      value={formData.confirmPassword}
+                      onChange={handleInputChange}
+                      required
+                      placeholder="Confirm your password"
+                      minLength="6"
+                    />
+                    {formData.confirmPassword && formData.password !== formData.confirmPassword && (
+                      <div className="password-strength weak">
+                        Passwords do not match
+                      </div>
+                    )}
                   </div>
-                )}
+                </div>
+              </>
+            )}
+
+            {isEditMode && (
+              <div className="form-row">
+                <div className="form-group full-width">
+                  <div className="info-box">
+                    <p><strong>Edit Mode Notice:</strong></p>
+                    <ul>
+                      <li>You can update your personal and coaching information</li>
+                      <li>Documents can be replaced if needed</li>
+                      <li>No payment is required for resubmission</li>
+                      <li>After updating, your application will go back to "pending" status</li>
+                    </ul>
+                  </div>
+                </div>
               </div>
-            </div>
+            )}
 
             <div className="form-actions step-actions">
-              <div></div>
+              {isEditMode && (
+                <button type="button" className="cancel-btn" onClick={handleCancelEdit}>
+                  Cancel
+                </button>
+              )}
+              <div style={{ flex: 1 }}></div>
               <button type="button" className="next-btn" onClick={nextStep}>
                 Next: Coach Information
                 <i className="fas fa-arrow-right"></i>
@@ -659,10 +897,9 @@ const CoachForm = ({ user, registrationData, onCompleteRegistration }) => {
             {/* Personal Information Section */}
             <section className="form-section">
               <h2 className="section-title">
-                <i className="fas fa-user"></i>
                 Personal Information
               </h2>
-              
+
               <div className="form-row">
                 <div className="form-group">
                   <label htmlFor="firstName">First Name *</label>
@@ -744,7 +981,9 @@ const CoachForm = ({ user, registrationData, onCompleteRegistration }) => {
                     placeholder="Enter 12-digit Aadhar number"
                     pattern="[0-9]{12}"
                     maxLength="12"
+                    disabled={isEditMode} // Aadhar cannot be changed
                   />
+                  {isEditMode && <small className="field-note">Aadhar number cannot be changed</small>}
                 </div>
               </div>
 
@@ -780,7 +1019,6 @@ const CoachForm = ({ user, registrationData, onCompleteRegistration }) => {
             {/* Address Information Section */}
             <section className="form-section">
               <h2 className="section-title">
-                <i className="fas fa-home"></i>
                 Address Information
               </h2>
 
@@ -955,7 +1193,6 @@ const CoachForm = ({ user, registrationData, onCompleteRegistration }) => {
             {/* Coaching Information Section */}
             <section className="form-section">
               <h2 className="section-title">
-                <i className="fas fa-trophy"></i>
                 Coaching Information
               </h2>
 
@@ -968,7 +1205,7 @@ const CoachForm = ({ user, registrationData, onCompleteRegistration }) => {
                     value={formData.selectedDistrict}
                     onChange={handleInputChange}
                     required
-                    disabled={loadingDistricts}
+                    disabled={loadingDistricts || isEditMode} // District cannot be changed in edit mode
                   >
                     <option value="">{loadingDistricts ? 'Loading districts...' : 'Choose your district association'}</option>
                     {districts.map(district => (
@@ -983,6 +1220,7 @@ const CoachForm = ({ user, registrationData, onCompleteRegistration }) => {
                   {districts.length === 0 && !loadingDistricts && (
                     <div className="info-text">No districts available. Please contact administrator.</div>
                   )}
+                  {isEditMode && <small className="field-note">District cannot be changed</small>}
                 </div>
 
                 <div className="form-group">
@@ -1035,30 +1273,37 @@ const CoachForm = ({ user, registrationData, onCompleteRegistration }) => {
                 Previous
               </button>
               <button type="button" className="next-btn" onClick={nextStep}>
-                Next: Documents & Payment
+                Next: {isEditMode ? 'Documents & Update' : 'Documents & Payment'}
                 <i className="fas fa-arrow-right"></i>
               </button>
             </div>
           </>
         )}
 
-        {/* Step 3: Documents & Payment */}
+        {/* Step 3: Documents & Payment/Update */}
         {currentStep === 3 && (
           <>
             {/* Documents Upload Section */}
             <section className="form-section">
               <h2 className="section-title">
-                <i className="fas fa-file-upload"></i>
                 Documents Upload
               </h2>
-              <p className="section-subtitle">Upload all required documents. Maximum file size: 5MB per file</p>
+              <p className="section-subtitle">
+                {isEditMode
+                  ? 'Update documents if needed. Existing documents will be kept if not changed.'
+                  : 'Upload all required documents. Maximum file size: 5MB per file'}
+              </p>
 
               <div className="documents-grid">
                 {/* Required Documents */}
                 <div className="document-group required">
-                  <h3>Required Documents</h3>
-                  <p className="document-subtitle">These documents are mandatory for registration</p>
-                  
+                  <h3>Required Documents {!isEditMode && '*'}</h3>
+                  <p className="document-subtitle">
+                    {isEditMode
+                      ? 'These documents are required. Upload new versions if needed.'
+                      : 'These documents are mandatory for registration'}
+                  </p>
+
                   {[
                     { key: 'photo', label: 'Passport Size Photo', type: 'image', icon: 'camera' },
                     { key: 'aadharFront', label: 'Aadhar Card Front', type: 'image', icon: 'id-card' },
@@ -1067,13 +1312,16 @@ const CoachForm = ({ user, registrationData, onCompleteRegistration }) => {
                   ].map((doc) => (
                     <div key={doc.key} className="document-item">
                       <label className="document-label">
-                        {doc.label} *
+                        {doc.label} {!isEditMode && '*'}
                         <span className="document-requirement">
                           ({doc.type === 'image' ? 'JPEG, JPG, PNG - Max 5MB' : 'PDF - Max 5MB'})
                         </span>
+                        {isEditMode && formData.documents[doc.key] && (
+                          <span className="document-exists">✓ Already uploaded</span>
+                        )}
                       </label>
                       <div className="file-upload-container">
-                        <div 
+                        <div
                           className="file-upload-area"
                           onDragOver={handleDragOver}
                           onDragLeave={handleDragLeave}
@@ -1091,12 +1339,30 @@ const CoachForm = ({ user, registrationData, onCompleteRegistration }) => {
                               {formData.documents[doc.key] ? (
                                 <div className="file-success">
                                   <i className="fas fa-check-circle"></i>
-                                  <span>{doc.label} Uploaded</span>
+                                  <span>
+                                    {isEditMode ? 'Document exists' : doc.label + ' Uploaded'}
+                                  </span>
+                                  {isEditMode && (
+                                    <button
+                                      type="button"
+                                      className="replace-btn"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        document.querySelector(`input[type="file"][accept="${doc.type === 'image' ? '.jpg,.jpeg,.png' : '.pdf'}"]`).click();
+                                      }}
+                                    >
+                                      Replace
+                                    </button>
+                                  )}
                                 </div>
                               ) : (
                                 <>
-                                  <span className="upload-title">Click to upload {doc.label.toLowerCase()}</span>
-                                  <span className="upload-subtitle">or drag and drop {doc.type === 'image' ? 'image' : 'PDF'}</span>
+                                  <span className="upload-title">
+                                    {isEditMode ? 'Upload new version' : `Click to upload ${doc.label.toLowerCase()}`}
+                                  </span>
+                                  <span className="upload-subtitle">
+                                    or drag and drop {doc.type === 'image' ? 'image' : 'PDF'}
+                                  </span>
                                 </>
                               )}
                             </div>
@@ -1108,8 +1374,8 @@ const CoachForm = ({ user, registrationData, onCompleteRegistration }) => {
                               <span>Uploading: {uploadProgress[doc.key]}%</span>
                             </div>
                             <div className="progress-bar-container">
-                              <div 
-                                className="progress-bar" 
+                              <div
+                                className="progress-bar"
                                 style={{ width: `${uploadProgress[doc.key]}%` }}
                               ></div>
                             </div>
@@ -1124,15 +1390,18 @@ const CoachForm = ({ user, registrationData, onCompleteRegistration }) => {
                 <div className="document-group additional">
                   <h3>Additional Documents (Optional)</h3>
                   <p className="document-subtitle">Supporting documents for your application</p>
-                  
+
                   {[1, 2, 3].map(num => (
                     <div key={num} className="document-item">
                       <label className="document-label">
                         Additional Document {num}
                         <span className="document-requirement">(PDF - Max 5MB)</span>
+                        {isEditMode && formData.documents[`doc${num}`] && (
+                          <span className="document-exists">✓ Already uploaded</span>
+                        )}
                       </label>
                       <div className="file-upload-container">
-                        <div 
+                        <div
                           className="file-upload-area"
                           onDragOver={handleDragOver}
                           onDragLeave={handleDragLeave}
@@ -1150,11 +1419,27 @@ const CoachForm = ({ user, registrationData, onCompleteRegistration }) => {
                               {formData.documents[`doc${num}`] ? (
                                 <div className="file-success">
                                   <i className="fas fa-check-circle"></i>
-                                  <span>Document {num} Uploaded</span>
+                                  <span>
+                                    {isEditMode ? 'Document exists' : `Document ${num} Uploaded`}
+                                  </span>
+                                  {isEditMode && (
+                                    <button
+                                      type="button"
+                                      className="replace-btn"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        document.querySelector(`input[type="file"][accept=".pdf"]`).click();
+                                      }}
+                                    >
+                                      Replace
+                                    </button>
+                                  )}
                                 </div>
                               ) : (
                                 <>
-                                  <span className="upload-title">Click to upload document</span>
+                                  <span className="upload-title">
+                                    {isEditMode ? 'Upload new document' : 'Click to upload document'}
+                                  </span>
                                   <span className="upload-subtitle">or drag and drop PDF</span>
                                 </>
                               )}
@@ -1167,8 +1452,8 @@ const CoachForm = ({ user, registrationData, onCompleteRegistration }) => {
                               <span>Uploading: {uploadProgress[`doc${num}`]}%</span>
                             </div>
                             <div className="progress-bar-container">
-                              <div 
-                                className="progress-bar" 
+                              <div
+                                className="progress-bar"
                                 style={{ width: `${uploadProgress[`doc${num}`]}%` }}
                               ></div>
                             </div>
@@ -1189,50 +1474,86 @@ const CoachForm = ({ user, registrationData, onCompleteRegistration }) => {
                   <li>Aadhar card should show all details clearly</li>
                   <li>Certificates should be in PDF format</li>
                   <li>Maximum file size for each document is 5MB</li>
+                  {isEditMode && <li>Only upload new documents if you need to replace existing ones</li>}
                 </ul>
               </div>
             </section>
 
-            {/* Payment Notice */}
-            <section className="form-section">
-              <h2 className="section-title">
-                <i className="fas fa-credit-card"></i>
-                Payment Information
-              </h2>
-              <div className="payment-notice">
-                <h3>Registration Fee: {feeLoading ? 'Loading...' : `₹${registrationFee}`}</h3>
-                <p>Complete your registration by making the payment. You will be redirected to secure payment gateway.</p>
-                
-                {process.env.NODE_ENV !== 'production' && (
-                  <div className="test-mode-banner">
-                    <i className="fas fa-vial"></i>
-                    Test Mode - Using Sandbox Environment
-                  </div>
-                )}
-                <div className="payment-features">
-                  <div className="feature">
-                    <i className="fas fa-shield-alt"></i>
-                    <span>Secure Payment</span>
-                  </div>
-                  <div className="feature">
-                    <i className="fas fa-credit-card"></i>
-                    <span>Multiple Payment Options</span>
-                  </div>
-                  <div className="feature">
-                    <i className="fas fa-file-invoice"></i>
-                    <span>Instant Receipt</span>
+            {/* Payment/Update Notice */}
+            {!isEditMode ? (
+              <section className="form-section">
+                <h2 className="section-title">
+                  Payment Information
+                </h2>
+                <div className="payment-notice">
+                  <h3>Registration Fee: {feeLoading ? 'Loading...' : `₹${registrationFee}`}</h3>
+                  <p>Complete your registration by making the payment. You will be redirected to secure payment gateway.</p>
+
+                  {process.env.NODE_ENV !== 'production' && (
+                    <div className="test-mode-banner">
+                      Test Mode - Using Sandbox Environment
+                    </div>
+                  )}
+                  <div className="payment-features">
+                    <div className="feature">
+                      Secure Payment
+                    </div>
+                    <div className="feature">
+                      Multiple Payment Options
+                    </div>
+                    <div className="feature">
+                      Instant Receipt
+                    </div>
                   </div>
                 </div>
-              </div>
-            </section>
+              </section>
+            ) : (
+              <section className="form-section">
+                <h2 className="section-title">
+                  Resubmission Information
+                </h2>
+                <div className="update-notice">
+                  <h3>
+                    No Payment Required
+                  </h3>
+                  <p>Since you're updating a previously submitted application, no payment is required.</p>
+                  <p>After updating your application, it will be submitted for district admin review again.</p>
+
+                  <div className="update-features">
+                    <div className="feature">
+                      Free Resubmission
+                    </div>
+                    <div className="feature">
+                      Quick Review Process
+                    </div>
+                    <div className="feature">
+                      Status Updates
+                    </div>
+                  </div>
+                </div>
+              </section>
+            )}
 
             <div className="form-actions step-actions">
               <button type="button" className="prev-btn" onClick={prevStep}>
                 <i className="fas fa-arrow-left"></i>
                 Previous
               </button>
-              <button type="submit" className="submit-btn payment-btn" disabled={loading || paymentProcessing || paymentVerified}>
-                {paymentVerified ? (
+              <button
+                type="submit"
+                className={`submit-btn ${isEditMode ? 'update-btn' : 'payment-btn'}`}
+                disabled={loading || paymentProcessing || paymentVerified || isResubmitting}
+              >
+                {isEditMode ? (
+                  isResubmitting ? (
+                    <>
+                      <div className="spinner"></div>
+                      Updating Application...
+                    </>
+                  ) : (
+                    'Update & Resubmit Application'
+                  )
+                ) : paymentVerified ? (
                   <>
                     <i className="fas fa-check-circle"></i>
                     Registration Completed!

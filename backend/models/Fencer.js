@@ -114,6 +114,38 @@ const FencerSchema = new mongoose.Schema({
         default: 'pending'
     },
     
+    // NEW: Track rejection history
+    rejectionHistory: [{
+        reason: String,
+        rejectedBy: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: 'User'
+        },
+        rejectedAt: {
+            type: Date,
+            default: Date.now
+        },
+        remarks: String
+    }],
+    
+    // NEW: Track resubmissions
+    resubmissionCount: {
+        type: Number,
+        default: 0
+    },
+    
+    // NEW: Track last submission date
+    lastSubmittedAt: {
+        type: Date,
+        default: Date.now
+    },
+    
+    // NEW: Track if form is editable (after rejection)
+    isEditable: {
+        type: Boolean,
+        default: false
+    },
+    
     // Payment Information
     paymentStatus: {
         type: String,
@@ -132,5 +164,6 @@ FencerSchema.index({ userId: 1 });
 FencerSchema.index({ selectedDistrict: 1 });
 FencerSchema.index({ aadharNumber: 1 });
 FencerSchema.index({ status: 1 });
+FencerSchema.index({ isEditable: 1 });
 
 module.exports = mongoose.model('Fencer', FencerSchema);

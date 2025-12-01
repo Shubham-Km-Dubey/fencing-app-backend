@@ -22,7 +22,6 @@ const UserSchema = new mongoose.Schema({
             return this.role !== 'super_admin';
         }
     },
-    // NEW FIELD — Stores the shortcode (e.g., NWD, SED, CD) from District.code
     districtShortcode: {
         type: String,
         uppercase: true,
@@ -53,6 +52,25 @@ const UserSchema = new mongoose.Schema({
     },
     rejectionReason: {
         type: String
+    },
+    // NEW: Allow user to edit form after rejection
+    canEditForm: {
+        type: Boolean,
+        default: false
+    },
+    // NEW: Track when user was last rejected
+    lastRejectedAt: {
+        type: Date
+    },
+    // NEW: Track number of resubmissions
+    resubmissionCount: {
+        type: Number,
+        default: 0
+    },
+    // NEW: Track if form needs attention after rejection
+    requiresResubmission: {
+        type: Boolean,
+        default: false
     },
     profileCompleted: {
         type: Boolean,

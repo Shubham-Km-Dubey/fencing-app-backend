@@ -7,10 +7,13 @@ require('dotenv').config();
 const app = express();
 
 // Middleware
-app.use(cors({ origin: true, credentials: true }));
-app.use(express.json());
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
-
+aapp.use(cors({
+  origin: [
+    'https://fencing-india-464c5.firebaseapp.com',
+    'https://fencing-india-464c5.web.app'  // Also allow .web.app domain
+  ],
+  credentials: true
+}));
 // MongoDB Connection
 const MONGODB_URI = 'mongodb+srv://Shubham:%23-Xc4RVVM7VUk8Q@cluster0.vtjyioo.mongodb.net/fencing_association?retryWrites=true&w=majority';
 

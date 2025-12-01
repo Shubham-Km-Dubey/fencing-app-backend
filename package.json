@@ -1,6 +1,7 @@
 {
   "dependencies": {
     "firebase": "^12.6.0",
-    "multer": "^2.0.2"
+    "multer": "^2.0.2",
+    "ngrok": "^5.0.0-beta.2"
   }
 }

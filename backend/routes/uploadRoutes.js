@@ -1,7 +1,6 @@
 const express = require('express');
 const multer = require('multer');
-const { storage } = require('../config/firebase');
-const { ref, uploadBytes, getDownloadURL, deleteObject } = require('firebase/storage');
+const { bucket } = require('../config/firebase');
 
 const router = express.Router();
 
@@ -12,7 +11,6 @@ const upload = multer({
     fileSize: 10 * 1024 * 1024 // 10MB
   },
   fileFilter: (req, file, cb) => {
-    // Allow images, PDFs, and documents
     if (
       file.mimetype.startsWith('image/') ||
       file.mimetype === 'application/pdf' ||
@@ -26,19 +24,10 @@ const upload = multer({
   }
 });
 
-// Test endpoint
-router.get('/test', (req, res) => {
-  res.json({ 
-    message: 'Upload route is working!',
-    storage: 'Firebase Storage Ready',
-    timestamp: new Date().toISOString()
-  });
-});
-
 // Single file upload to Firebase Storage
 router.post('/single', upload.single('file'), async (req, res) => {
   try {
-    console.log('Upload request received:', req.file?.originalname);
+    console.log('📤 Upload request received:', req.file?.originalname);
     
     if (!req.file) {
       return res.status(400).json({ 
@@ -49,45 +38,89 @@ router.post('/single', upload.single('file'), async (req, res) => {
 
     // Create unique filename with timestamp
     const timestamp = Date.now();
-    const fileExtension = req.file.originalname.split('.').pop();
-    const fileName = `uploads/${timestamp}_${Math.random().toString(36).substring(2, 15)}.${fileExtension}`;
+    const randomString = Math.random().toString(36).substring(2, 15);
+    const sanitizedOriginalName = req.file.originalname.replace(/[^a-zA-Z0-9.]/g, '_');
+    const fileName = `uploads/${timestamp}_${randomString}_${sanitizedOriginalName}`;
 
-    console.log('Uploading to Firebase Storage:', fileName);
+    console.log('📁 Uploading to Firebase Storage:', fileName);
 
-    // Create storage reference
-    const storageRef = ref(storage, fileName);
-
-    // Upload to Firebase Storage
-    const snapshot = await uploadBytes(storageRef, req.file.buffer, {
-      contentType: req.file.mimetype,
+    // Create a file reference in the bucket
+    const file = bucket.file(fileName);
+    
+    // Create a write stream to upload the file
+    const blobStream = file.createWriteStream({
+      metadata: {
+        contentType: req.file.mimetype,
+      },
+      resumable: false
     });
 
-    console.log('File uploaded to Firebase, getting download URL...');
-
-    // Get public download URL
-    const downloadURL = await getDownloadURL(snapshot.ref);
-
-    // File data to save to MongoDB (if needed)
-    const fileData = {
-      originalName: req.file.originalname,
-      fileName: fileName,
-      downloadURL: downloadURL,
-      contentType: req.file.mimetype,
-      size: req.file.size,
-      uploadedAt: new Date().toISOString(),
-      storagePath: snapshot.ref.fullPath
-    };
-
-    console.log('✅ File uploaded successfully:', fileData.originalName);
-
-    res.status(200).json({
-      success: true,
-      message: 'File uploaded successfully to Firebase Storage!',
-      data: fileData
+    // Handle stream events
+    blobStream.on('error', (error) => {
+      console.error('❌ Upload stream error:', error);
+      res.status(500).json({ 
+        success: false, 
+        error: 'Upload failed', 
+        details: error.message 
+      });
     });
+
+    blobStream.on('finish', async () => {
+      try {
+        // With Uniform Bucket-Level Access, we can't use makePublic()
+        // Instead, we can generate a public URL directly
+        // Firebase Storage files are accessible via this pattern:
+        // https://firebasestorage.googleapis.com/v0/b/{bucket-name}/o/{file-path}?alt=media
+        
+        // Encode the file path for URL
+        const encodedPath = encodeURIComponent(fileName).replace(/%2F/g, '/');
+        
+        // Generate public URL (alternative method)
+        const publicUrl = `https://firebasestorage.googleapis.com/v0/b/${bucket.name}/o/${encodedPath}?alt=media`;
+        
+        // Or use the standard Google Cloud Storage URL
+        const gcsUrl = `https://storage.googleapis.com/${bucket.name}/${fileName}`;
+        
+        console.log('✅ File uploaded successfully:', {
+          originalName: req.file.originalname,
+          publicUrl: publicUrl,
+          gcsUrl: gcsUrl,
+          size: req.file.size
+        });
+
+        // File data to return
+        const fileData = {
+          originalName: req.file.originalname,
+          fileName: fileName,
+          downloadURL: publicUrl, // Use Firebase public URL
+          gcsUrl: gcsUrl, // Alternative URL
+          contentType: req.file.mimetype,
+          size: req.file.size,
+          uploadedAt: new Date().toISOString(),
+          storagePath: file.name
+        };
+
+        res.status(200).json({
+          success: true,
+          message: 'File uploaded successfully!',
+          data: fileData
+        });
+
+      } catch (error) {
+        console.error('❌ Error finalizing upload:', error);
+        res.status(500).json({ 
+          success: false, 
+          error: 'Failed to finalize upload', 
+          details: error.message 
+        });
+      }
+    });
+
+    // Start the upload
+    blobStream.end(req.file.buffer);
 
   } catch (error) {
-    console.error('❌ Upload error:', error);
+    console.error('💥 Upload error:', error);
     res.status(500).json({ 
       success: false,
       error: 'File upload failed',

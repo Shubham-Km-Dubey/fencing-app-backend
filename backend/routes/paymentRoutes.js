@@ -15,23 +15,25 @@ const router = express.Router();
 // ==============================
 const CASHFREE_APP_ID = process.env.CASHFREE_APP_ID || "";
 const CASHFREE_SECRET_KEY = process.env.CASHFREE_SECRET_KEY || "";
-const CASHFREE_BASE_URL =
-  process.env.CASHFREE_BASE_URL || "https://sandbox.cashfree.com/pg";
+const CASHFREE_BASE_URL = process.env.CASHFREE_BASE_URL || "https://sandbox.cashfree.com/pg";
+const CASHFREE_API_VERSION = process.env.CASHFREE_API_VERSION || "2023-08-01";
 
 const FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:3000";
 const BACKEND_URL = process.env.BACKEND_URL || "http://localhost:5000";
 
-// MOCK mode is ONLY active if keys are missing
-// const USE_MOCK =
-//   !CASHFREE_APP_ID ||
-//   CASHFREE_APP_ID === "TEST_APP_ID" ||
-//   !CASHFREE_SECRET_KEY;
-const USE_MOCK = true; // Force mock mode for testing
+// MOCK mode is ONLY active if keys are missing or test keys
+const USE_MOCK = 
+  !CASHFREE_APP_ID ||
+  CASHFREE_APP_ID.includes("TEST") ||
+  !CASHFREE_SECRET_KEY ||
+  CASHFREE_SECRET_KEY.includes("test");
+
 console.log("🔐 Cashfree Config Loaded:", {
   baseURL: CASHFREE_BASE_URL,
-  appIdPresent: !!CASHFREE_APP_ID,
-  secretPresent: !!CASHFREE_SECRET_KEY,
+  appId: CASHFREE_APP_ID ? `${CASHFREE_APP_ID.substring(0, 8)}...` : 'Missing',
+  secretKey: CASHFREE_SECRET_KEY ? 'Present' : 'Missing',
   mockMode: USE_MOCK,
+  environment: process.env.CASHFREE_ENVIRONMENT || 'not set'
 });
 
 // ==============================
@@ -60,7 +62,7 @@ router.post("/create-session", async (req, res) => {
     // MOCK MODE
     // ==============================
     if (USE_MOCK) {
-      console.log("⚠️ MOCK MODE ACTIVE — no Cashfree keys available");
+      console.log("⚠️ MOCK MODE ACTIVE — using simulated payments");
 
       const payment = new Payment({
         orderId,
@@ -102,6 +104,8 @@ router.post("/create-session", async (req, res) => {
     // ==============================
     // REAL CASHFREE API CALL
     // ==============================
+    console.log("🚀 Using REAL Cashfree production API");
+    
     const cfPayload = {
       order_id: orderId,
       order_amount: orderAmount,
@@ -119,7 +123,10 @@ router.post("/create-session", async (req, res) => {
       order_note: `Registration fee for ${userType}`,
     };
 
-    console.log("➡️ Sending order to Cashfree:", cfPayload);
+    console.log("➡️ Sending order to Cashfree API:", {
+      ...cfPayload,
+      customer_details: { ...cfPayload.customer_details, customer_email: '***' } // Hide email in logs
+    });
 
     const response = await fetch(`${CASHFREE_BASE_URL}/orders`, {
       method: "POST",
@@ -127,20 +134,28 @@ router.post("/create-session", async (req, res) => {
         "Content-Type": "application/json",
         "x-client-id": CASHFREE_APP_ID,
         "x-client-secret": CASHFREE_SECRET_KEY,
-        "x-api-version": "2023-08-01", // Correct version
+        "x-api-version": CASHFREE_API_VERSION,
       },
       body: JSON.stringify(cfPayload),
     });
 
     const data = await response.json();
-    console.log("📥 Cashfree Response:", data);
+    console.log("📥 Cashfree Response:", {
+      status: response.status,
+      order_id: data.order_id,
+      payment_session_id: data.payment_session_id ? 'Present' : 'Missing'
+    });
 
     if (!response.ok) {
       throw new Error(
         data.message ||
           data.error ||
-          "Cashfree authentication failed. Check keys."
+          `Cashfree API error: ${response.status}`
       );
+    }
+
+    if (!data.payment_session_id) {
+      throw new Error("No payment_session_id received from Cashfree");
     }
 
     // Save Payment Record
@@ -161,18 +176,17 @@ router.post("/create-session", async (req, res) => {
     });
     await payment.save();
 
-    // FIXED: Return only the data needed for Cashfree SDK - no payment_url
+    // Return data for Cashfree SDK
     return res.json({
       success: true,
       data: {
         order_id: orderId,
         payment_session_id: data.payment_session_id,
         order_amount: orderAmount,
-        // No payment_url - frontend will use Cashfree SDK with payment_session_id
       },
     });
   } catch (error) {
-    console.error("❌ Payment Error:", error.message || error);
+    console.error("❌ Payment Session Creation Error:", error.message || error);
 
     return res.status(500).json({
       success: false,
@@ -196,53 +210,71 @@ router.get("/verify/:orderId", async (req, res) => {
       return res.status(404).json({ success: false, error: "Payment not found" });
     }
 
-    // MOCK
+    // MOCK MODE
     if (USE_MOCK) {
-      payment.paymentStatus = "completed";
+      payment.paymentStatus = "SUCCESS";
       payment.cashfreeOrderStatus = "PAID";
       payment.paymentTime = new Date();
       payment.transactionId = `mock_txn_${Date.now()}`;
       await payment.save();
-      await completeRegistration(payment);
+      
+      if (payment.paymentStatus !== "SUCCESS") {
+        await completeRegistration(payment);
+      }
 
       return res.json({
         success: true,
         data: {
           order_id: orderId,
           order_status: "PAID",
-          payment_status: "completed",
+          payment_status: "SUCCESS",
         },
       });
     }
 
     // REAL CASHFREE VERIFICATION
+    console.log("🔐 Verifying with Cashfree API");
+    
     const response = await fetch(`${CASHFREE_BASE_URL}/orders/${orderId}`, {
       method: "GET",
       headers: {
         "x-client-id": CASHFREE_APP_ID,
         "x-client-secret": CASHFREE_SECRET_KEY,
-        "x-api-version": "2023-08-01",
+        "x-api-version": CASHFREE_API_VERSION,
       },
     });
 
     const data = await response.json();
-    console.log("📥 Verify Response:", data);
+    console.log("📥 Cashfree Verify Response:", {
+      status: response.status,
+      order_id: data.order_id,
+      order_status: data.order_status
+    });
 
     if (!response.ok) {
-      throw new Error(data.message || "Verification failed");
+      throw new Error(data.message || `Verification failed: ${response.status}`);
     }
 
     if (data.order_status === "PAID") {
-      payment.paymentStatus = "completed";
+      payment.paymentStatus = "SUCCESS";
       payment.cashfreeOrderStatus = "PAID";
       payment.paymentTime = new Date();
       payment.transactionId = data.payment_transaction_id;
       await payment.save();
 
-      await completeRegistration(payment);
+      // Only complete registration if not already done
+      if (!payment.registrationCompleted) {
+        await completeRegistration(payment);
+        payment.registrationCompleted = true;
+        await payment.save();
+      }
     } else if (data.order_status === "FAILED") {
-      payment.paymentStatus = "failed";
+      payment.paymentStatus = "FAILED";
       payment.cashfreeOrderStatus = "FAILED";
+      await payment.save();
+    } else if (data.order_status === "ACTIVE") {
+      payment.paymentStatus = "PENDING";
+      payment.cashfreeOrderStatus = "ACTIVE";
       await payment.save();
     }
 
@@ -255,7 +287,7 @@ router.get("/verify/:orderId", async (req, res) => {
       },
     });
   } catch (error) {
-    console.error("❌ Verify Error:", error);
+    console.error("❌ Payment Verification Error:", error);
 
     res.status(500).json({
       success: false,
@@ -478,7 +510,7 @@ router.post("/webhook", express.json(), async (req, res) => {
 
     if (event === "ORDER.PAYMENT_SUCCESS") {
       const payment = await Payment.findOne({ orderId });
-      if (payment && payment.paymentStatus !== "completed") {
+      if (payment && payment.paymentStatus !== "SUCCESS") {
         payment.paymentStatus = "SUCCESS";
         payment.cashfreeOrderStatus = "PAID";
         payment.paymentTime = new Date();
