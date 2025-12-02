@@ -7,13 +7,19 @@ require('dotenv').config();
 const app = express();
 
 // Middleware
-aapp.use(cors({
+app.use(cors({
   origin: [
+    'http://localhost:3000',  // Add this for local development
     'https://fencing-india-464c5.firebaseapp.com',
-    'https://fencing-india-464c5.web.app'  // Also allow .web.app domain
+    'https://fencing-india-464c5.web.app'
   ],
   credentials: true
 }));
+
+// Add body parser middleware
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
 // MongoDB Connection
 const MONGODB_URI = 'mongodb+srv://Shubham:%23-Xc4RVVM7VUk8Q@cluster0.vtjyioo.mongodb.net/fencing_association?retryWrites=true&w=majority';
 
@@ -37,9 +43,6 @@ app.use('/api/user-management', require('./routes/userManagementRoutes'));
 app.use('/api/districts', require('./routes/districts'));
 app.use('/api/fees', require('./routes/fees'));
 
-// NEW: Public fee route (used by Home page)
-app.use('/api/fees', require('./routes/fees'));
-
 // ==================== TEST ROUTE ====================
 app.get('/api/status', (req, res) => {
   res.json({ 
@@ -49,14 +52,13 @@ app.get('/api/status', (req, res) => {
   });
 });
 
-// ==================== INITIALIZE DEFAULT DATA ====================
+// ==================== MINIMAL DEFAULT DATA ====================
 const initializeDefaultData = async () => {
   try {
     const User = require('./models/User');
-    const District = require('./models/District');
     const RegistrationFee = require('./models/RegistrationFee');
 
-    // 1. Super Admin
+    // 1. Super Admin ONLY - Create ONLY if doesn't exist
     let superAdmin = await User.findOne({ email: 'superadmin@daf.com' });
     if (!superAdmin) {
       superAdmin = new User({
@@ -69,73 +71,48 @@ const initializeDefaultData = async () => {
         centralApproved: true
       });
       await superAdmin.save();
-      console.log('Super Admin created');
+      console.log('✅ Super Admin created (first time only)');
+    } else {
+      console.log('✅ Super Admin already exists');
     }
 
-    // 2. Default District Admins + Districts
-    const defaults = [
-      { email: 'northeast@daf.com', name: 'North East District Admin', district: 'North East' },
-      { email: 'northwest@daf.com', name: 'North West District Admin', district: 'North West' }
-    ];
+    // 2. NO District Admins - Must be created through dashboard
+    console.log('ℹ️  District admins must be created through Super Admin dashboard');
 
-    for (const d of defaults) {
-      let admin = await User.findOne({ email: d.email });
-      if (!admin) {
-        admin = new User({
-          email: d.email,
-          password: 'admin123',
-          role: 'district_admin',
-          district: d.district,
-          name: d.name,
-          isApproved: true,
-          districtApproved: true,
-          centralApproved: true
-        });
-        await admin.save();
+    // 3. Check if ANY fees exist - Create only if NO fees exist at all
+    const existingFeesCount = await RegistrationFee.countDocuments();
+    
+    if (existingFeesCount === 0) {
+      console.log('⚠️  No registration fees found. Creating minimal default fees...');
+      
+      // Create ONLY basic fees if database is completely empty
+      const defaultFees = [
+        { userType: 'fencer', amount: 500 },
+        { userType: 'coach', amount: 1000 },
+        { userType: 'referee', amount: 800 },
+        { userType: 'school', amount: 2000 },
+        { userType: 'club', amount: 3000 }
+      ];
 
-        await District.findOneAndUpdate(
-          { name: d.district },
-          {
-            name: d.district,
-            code: d.district.toUpperCase().replace(' ', '_'),
-            adminEmail: d.email,
-            adminName: d.name,
-            contactNumber: '9876543210',
-            address: `${d.district} District Office, Delhi`,
-            createdBy: admin._id
-          },
-          { upsert: true }
-        );
-        console.log(`Created district admin: ${d.email}`);
-      }
-    }
-
-    // 3. Default Registration Fees (only if not exist)
-    const defaultFees = [
-      { userType: 'fencer', amount: 500 },
-      { userType: 'coach', amount: 1000 },
-      { userType: 'referee', amount: 800 },
-      { userType: 'school', amount: 2000 },
-      { userType: 'club', amount: 3000 }
-    ];
-
-    for (const f of defaultFees) {
-      await RegistrationFee.findOneAndUpdate(
-        { userType: f.userType },
-        { 
+      for (const f of defaultFees) {
+        await RegistrationFee.create({
+          userType: f.userType,
           amount: f.amount, 
           updatedBy: superAdmin._id,
           updatedAt: new Date()
-        },
-        { upsert: true, new: true }
-      );
+        });
+        console.log(`✅ Created initial fee for ${f.userType}: ₹${f.amount}`);
+      }
+      console.log('✅ Initial fees created (database was empty)');
+    } else {
+      console.log(`✅ ${existingFeesCount} fee records already exist. No changes made.`);
+      console.log('ℹ️  Fees must be managed through Super Admin dashboard');
     }
-    console.log('Default registration fees initialized');
 
-    console.log('All default data ready!');
+    console.log('✅ Default data initialization complete');
 
   } catch (error) {
-    console.error('Error initializing default data:', error);
+    console.error('❌ Error initializing default data:', error);
   }
 };
 
@@ -144,8 +121,9 @@ const PORT = process.env.PORT || 5000;
 
 mongoose.connection.once('open', () => {
   app.listen(PORT, () => {
-    console.log(`Server running on http://localhost:${PORT}`);
-    // Initialize everything after 1.5 seconds
-  setTimeout(initializeDefaultData, 1500);
+    console.log(`🚀 Server running on http://localhost:${PORT}`);
+    console.log('🔄 Checking for required default data...');
+    // Initialize minimal data after 1.5 seconds
+    setTimeout(initializeDefaultData, 1500);
   });
 });
